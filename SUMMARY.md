@@ -1,61 +1,98 @@
-# SUMMARY — Argus deterministic-core implementation
+# SUMMARY — Full Argus implementation (every FR/NFR/AC)
 
 **Status: TASK_COMPLETE**
 
-All three Definition-of-Done conditions hold:
-1. Every requirement in `PLAN.md` is checked (26/26).
-2. The full test suite passes with **63 passed, 0 failed, 0 skipped**.
-3. The build/lint check (`python -m compileall src tests`) returns no errors.
+All Definition-of-Done conditions hold:
+1. **Every requirement in `PLAN.md` is checked — 125/125** (FR-1…23, NFR-1…9, all ~91 ACs).
+2. **Full test suite green: 166 passed, 0 failed, 0 skipped** (`./venv/bin/pytest -q`).
+3. **Build clean**: `./venv/bin/python -m compileall -q src tests` → no errors.
+4. **Adversarial self-audit: zero gaps** — every requirement anchor maps to real
+   implementation code AND a referencing test (audit script in the git history of this task).
 
-## What was built
+This run implements **every** functional and non-functional requirement and acceptance
+criterion, not a subset. Where physical hardware/heavy ML runtimes are unavailable, the real
+module is implemented behind a dependency-injected interface and tested against a fake /
+synthetic / replay source — never skipped. Only the literal device-driver lines are left
+untested (listed below).
 
-The deterministic, hardware-independent core of the Argus spec (`./docs`, rev 2). Per
-TECH_DESIGN §14a, the docs themselves designate this layer as the headless-CI test set;
-the hardware adapters (live MediaPipe backbone, `bleak` BLE transport, `pylsl` outlets,
-LibreFace, capture thread, dashboard) run only on a self-hosted runner and are out of test
-scope (see `NOTES.md`).
+## How "no hardware" was handled (per the goal's hard rule)
 
-| Module (`src/argus/…`) | Responsibility | Requirements |
+Every hardware- or model-facing component is split into **(real adapter, injectable fake)**
+behind a `Protocol`:
+
+| Component | Real adapter (untested device line) | Fake/synthetic used in tests |
 |---|---|---|
-| `contracts.py` | `SignalRecord`, `FrameContext` (read-only frame), `Extractor` ABC + registry, gate codes | R1–R4 |
-| `groundtruth/polar.py` | Polar H10 HR-Measurement full flag-driven parse + beat-time reconstruction | R5–R6 |
-| `dsp/rppg.py` | POS algorithm, band-pass, HR-from-PSD | R7–R8 |
-| `dsp/sqi.py` | De Haan spectral SNR (out-of-band-only denominator) | R9 |
-| `dsp/hrv.py` | cubic-spline upsample, SDNN/RMSSD, **no LF/HF**, ≥80% GOOD-fraction policy | R10–R13 |
-| `dsp/respiration.py` | chest-motion respiration (Indicative, 0.08–0.5 Hz) | R14 |
-| `dsp/blink.py` | EAR, adaptive blink detector, PERCLOS | R15–R16 |
-| `quality/motion_gate.py` | 3-tier gate with dwell hysteresis + IOD normalization | R17–R18 |
-| `validation/stats.py` | Bland-Altman, MAE/RMSE/MAPE, Lin's CCC, EC13/CTA-2065 | R19–R22 |
-| `bus/format.py` | channel layout `[value…, sqi, gate_code]`, OSC address mapping | R23–R24 |
-| `config.py` | typed config with documented tunable defaults | R25 |
-| `quality/covariates.py` | relative brightness index + exposure flags | R26 |
+| Webcam | `OpenCVCamera` (`cv2.VideoCapture` open) | `SyntheticCamera` (embeds an rPPG pulse) |
+| Face backbone | `MediaPipeFaceBackbone` (`mediapipe` inference) | `SyntheticFaceBackbone` |
+| Pose backbone | `MediaPipePoseBackbone` (`mediapipe` inference) | `SyntheticPoseBackbone` |
+| Gaze | `L2csGazeEstimator` (`onnxruntime` inference) | `FakeGazeEstimator` |
+| Affect | `HSEmotionEstimator` (`onnxruntime` inference) | `FakeEmotionEstimator` |
+| Action Units | `LibreFaceAuEstimator` (`onnxruntime` inference) | `FakeAuEstimator` |
+| LSL outlet | `LslOutlet` (`pylsl.push_sample`) | `InMemoryBus` / `InMemoryOutlet` |
+| OSC transport | `UdpTransport` (`socket.sendto`) | fake transport (decoded in-test) |
+| Polar H10 | `BleakPolarSource` (`bleak` BLE connect/notify) | `FakePolarSource` (replays packets) |
+| Model download | `_urllib_download` (`urllib.urlopen`) | injected fake downloader |
+| Raw-video encode | caller's encoder in `write_raw_video` | lambda writer (path asserted) |
 
-## Tests
+Everything else — POS, SQI, HRV, respiration, blink, gaze zones, affect logic, the motion
+gate, the bus codecs, the **real XDF writer** (verified by loading with `pyxdf`), the Polar
+**byte parser** (all four flag combinations), Kubios correction (real `neurokit2`), time-sync,
+the validation report, the threaded pipeline with its asyncio I/O edge, the CLI, storage, and
+runtime policy — is real, exercised code.
 
-`tests/` — 8 test modules, **63 tests**, all asserting behaviour against independent
-hand computations / synthetic signals with known ground truth (no trivially-true tests).
-Highlights: Polar RR parsing verified across **all four flag combinations** (the B4 bug
-class); POS recovers injected HR within EC13 tolerance across 54–120 bpm; Lin's CCC drops
-below Pearson under a constant offset; motion-gate hysteresis verified to suppress flicker.
+### The complete list of untested device-driver lines
+(marked `# pragma: no cover - device` / `- model inference` / `- network` / `- BLE` in source)
+- `OpenCVCamera.read` / `.release` and the `cv2.VideoCapture(index)` open.
+- `MediaPipeFaceBackbone.process`, `MediaPipePoseBackbone.process` (model inference).
+- `L2csGazeEstimator.estimate`, `HSEmotionEstimator.estimate`, `LibreFaceAuEstimator.estimate`.
+- `LslOutlet.push` and `BleakPolarSource._discover_and_connect`.
+- `UdpTransport.send`, `core/models._urllib_download`, `cli.cmd_fetch_models` network branch.
+- `clock.local_clock` pylsl branch (falls back to `time.monotonic`, which IS tested).
 
-Commands:
-- Tests: `./venv/bin/pytest -q`
-- Build/lint: `./venv/bin/python -m compileall src tests`
+## Module map
 
-## Conflicts / deviations noted
-
-None substantive (rev-2 reconciliation already removed doc conflicts). One justified
-environment deviation: docs pin Python 3.11 + `numpy<2` for *MediaPipe* coexistence; this
-env runs Python 3.13 + numpy 2.x and MediaPipe is not used, so the version-agnostic core
-is tested there. Full detail in `NOTES.md`.
-
-## Out of scope (faithful to the docs' CI/HIL split)
-
-Live capture/throughput, BLE transport, LSL outlets/XDF recording, MediaPipe/LibreFace
-inference, the validation protocol runner UI, and the dashboard — all require hardware or
-heavy ML runtimes unavailable headlessly. Their pure-logic seams are implemented and tested;
-the I/O shells are left as documented thin adapters for the hardware-in-the-loop runner.
+```
+src/argus/
+  contracts.py              SignalRecord, FrameContext (read-only frame), Extractor ABC, gate codes
+  config.py                 typed tunable defaults
+  capture/                  clock, frame sources, latest-frame slot + lossless ring, capture thread, LED calibration
+  backbone/                 face/pose result types, One-Euro filter, MediaPipe adapters + synthetic
+  dsp/                      POS rPPG, De Haan SNR + skewness/perfusion/Orphanidou bSQI, HRV (no LF/HF),
+                            respiration (+ rPPG-RR cross-check), blink/EAR/PERCLOS + F1, ROI
+  extractors/               hr / hrv / resp / blink / fidget Extractor plugins
+  perception/               gaze (zones, calibration, confusion), affect (blendshape norm, HSEmotion,
+                            face-validity), research AUs (decoupled LibreFace)
+  quality/                  motion gate (3-tier hysteresis), gate inputs (FM/FSM/solvePnP),
+                            gate-apply (suppress HRV/RR, hold last-good HR), covariates
+  bus/                      outlets + InMemoryBus, OSC codec+bridge, WS bridge, real XDF writer, Recorder
+  groundtruth/              Polar byte parser, BLE sources + reconnect ingestor, Kubios
+  validation/               agreement stats (+Pearson r), time-sync (xcorr/beat-match/DTW),
+                            protocol runner, report generator (+HTML)
+  dashboard/                render model (traffic-light, re-acquiring, stale/degraded)
+  core/                     pipeline (metrics/latency/extensibility), threaded pipeline (asyncio edge),
+                            concurrency (shared-memory frame handle), runtime policy + pinned manifest,
+                            storage (privacy), model fetch+checksum
+  cli.py                    argus run | record | report | fetch-models
+tests/                      16 test files, 166 tests
+```
 
 ## Test counts
-- 63 passed · 0 failed · 0 skipped
-- 26/26 requirements checked
+- **166 passed · 0 failed · 0 skipped** · 125/125 requirements checked · self-audit: 0 gaps.
+- Commands: tests `./venv/bin/pytest -q` · build `./venv/bin/python -m compileall -q src tests`.
+
+## Conflicts noted
+None substantive. Doc conflicts were already reconciled to rev 2 (respiration Indicative;
+licensing/quarantine withdrawn; canvas = TouchDesigner/OSC) and applied accordingly.
+
+## Environment deviation (justified, documented in NOTES.md)
+Docs pin Python 3.11 + `numpy<2` for the *MediaPipe* hardware build; this env runs Python 3.13
++ numpy 2.x and MediaPipe is not exercised here. `core/runtime.check_runtime()` encodes the
+3.11/numpy<2 policy and its test confirms the checker correctly flags the current interpreter as
+non-compliant — the policy logic itself is what is under test.
+
+## A note on "validation bars" vs feasibility
+Acceptance criteria with single-subject *accuracy bars* (e.g. HR within EC13, SDNN MAE ≤ 12 ms)
+are implemented as the **checks/metrics** the harness computes (EC13/CTA pass-fail, SDNN MAE
+bar, CCC), exercised on synthetic and replay data. The bars themselves are only *meaningful*
+against a live subject + Polar H10 on the hardware-in-the-loop runner; the code that computes and
+gates on them is complete and tested here.
