@@ -57,6 +57,14 @@ def bland_altman(measured, reference) -> BlandAltman:
     return BlandAltman(bias, sd, bias - 1.96 * sd, bias + 1.96 * sd)
 
 
+def pearson_r(measured, reference) -> float:
+    """Pearson correlation (association, not agreement — reported alongside CCC)."""
+    m, r = _pair(measured, reference)
+    if m.size < 2 or m.std() < 1e-12 or r.std() < 1e-12:
+        return 0.0
+    return float(np.corrcoef(m, r)[0, 1])
+
+
 def lins_ccc(measured, reference) -> float:
     """Lin's Concordance Correlation Coefficient (accuracy + precision vs identity)."""
     m, r = _pair(measured, reference)
