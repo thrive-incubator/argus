@@ -44,13 +44,16 @@ class RppgExtractor(Extractor):
         self._last_emit = ctx.ts
         center = float((tw[0] + tw[-1]) / 2.0)
         gate = self.gate_fn(ctx) if self.gate_fn else "unknown"
+        sqi = snr_to_sqi(snr)
         return [
             SignalRecord(
                 name="hr",
                 value=float(hr),
-                sqi=snr_to_sqi(snr),
+                sqi=sqi,
                 ts=center,
                 gate=gate,
-                meta={"snr_db": snr, "method": "pos", "window_s": self.window_s},
+                # low-SQI records are emitted WITH a flag, never silently dropped (H1.AC3)
+                meta={"snr_db": snr, "method": "pos", "window_s": self.window_s,
+                      "low_sqi": sqi < 0.3},
             )
         ]

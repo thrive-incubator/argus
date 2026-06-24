@@ -13,6 +13,19 @@ from scipy import signal
 RESP_BAND_HZ = (0.08, 0.5)  # 4.8–30 brpm
 
 
+def rppg_derived_rr(bvp: np.ndarray, fps: float) -> float:
+    """Secondary respiration estimate from the rPPG amplitude envelope (E1.AC2).
+
+    Respiration amplitude-modulates the pulse; the Hilbert envelope's dominant frequency in
+    the respiration band gives a (weaker, secondary) RR cross-check.
+    """
+    from scipy.signal import hilbert
+
+    x = np.asarray(bvp, dtype=float)
+    env = np.abs(hilbert(x - x.mean()))
+    return respiration_rate(env, fps)
+
+
 def respiration_rate(displacement: np.ndarray, fps: float, nfft: int = 4096) -> float:
     """Estimate respiration rate (breaths/min) from a chest-displacement series.
 

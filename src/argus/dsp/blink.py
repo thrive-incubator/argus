@@ -75,6 +75,35 @@ class AdaptiveBlinkDetector:
         return completed
 
 
+def blink_f1(detected_ts, annotated_ts, tol_s: float = 0.1) -> dict:
+    """F1 of detected blink events vs frame-level annotation with a ±tol match (F1.AC3).
+
+    Each annotation may match at most one detection within ``tol_s``.
+    """
+    det = sorted(float(t) for t in detected_ts)
+    ann = sorted(float(t) for t in annotated_ts)
+    used = [False] * len(det)
+    tp = 0
+    for a in ann:
+        best = -1
+        best_dt = tol_s + 1e-9
+        for i, d in enumerate(det):
+            if used[i]:
+                continue
+            dt = abs(d - a)
+            if dt <= tol_s and dt < best_dt:
+                best, best_dt = i, dt
+        if best >= 0:
+            used[best] = True
+            tp += 1
+    fp = len(det) - tp
+    fn = len(ann) - tp
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall, "f1": f1}
+
+
 def perclos(ear_series, baseline: float, closed_frac: float = 0.8) -> float:
     """PERCLOS-P80: fraction of frames with the eye at least 80% closed.
 

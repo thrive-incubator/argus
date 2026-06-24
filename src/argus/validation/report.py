@@ -56,7 +56,7 @@ def agreement(measured, reference) -> dict:
     }
 
 
-def hr_report(hr_measured, hr_ref, hr_inst_measured=None, hr_inst_ref=None) -> dict:
+def hr_report(hr_measured, hr_ref, hr_inst_measured=None, hr_inst_ref=None, snr_db=None) -> dict:
     """HR agreement at the 60 s average plus a 4–10 s quasi-instantaneous window (I2.AC2)."""
     rep = {
         "avg_60s": agreement(hr_measured, hr_ref),
@@ -64,6 +64,8 @@ def hr_report(hr_measured, hr_ref, hr_inst_measured=None, hr_inst_ref=None) -> d
         "cta2065_pass": cta2065_pass(hr_measured, hr_ref),
         "note": "EC13/CTA numeric thresholds are feasibility targets, not conformance.",
     }
+    if snr_db is not None:  # I2.AC1 — report SNR alongside agreement
+        rep["mean_snr_db"] = float(np.mean(np.asarray(snr_db, dtype=float)))
     if hr_inst_measured is not None:
         rep["quasi_instant_4_10s"] = agreement(hr_inst_measured, hr_inst_ref)
     return rep
@@ -105,6 +107,7 @@ def generate_report(data: dict, fitzpatrick: int = 4) -> dict:
             block["hr"] = hr_report(
                 d["hr_measured"], d["hr_ref"],
                 d.get("hr_inst_measured"), d.get("hr_inst_ref"),
+                snr_db=d.get("snr_db"),
             )
         if "sdnn_measured" in d:
             block["sdnn"] = sdnn_report(d["sdnn_measured"], d["sdnn_ref"])

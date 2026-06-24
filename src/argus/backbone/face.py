@@ -14,6 +14,8 @@ import numpy as np
 
 from .types import N_BLENDSHAPES, N_FACE_LANDMARKS, N_IRIS, FaceResult
 
+DEFAULT_NUM_FACES = 1  # A2.AC2 — single face enables MediaPipe temporal smoothing
+
 
 class FaceBackbone(Protocol):
     def process(self, frame: np.ndarray, ts: float) -> FaceResult | None: ...
@@ -22,7 +24,7 @@ class FaceBackbone(Protocol):
 class MediaPipeFaceBackbone:
     """Real MediaPipe Face Landmarker adapter (num_faces=1, blendshapes + head pose)."""
 
-    def __init__(self, model_path: str, num_faces: int = 1):
+    def __init__(self, model_path: str, num_faces: int = DEFAULT_NUM_FACES):
         import mediapipe as mp  # local import: device/model path only
 
         self.num_faces = num_faces
