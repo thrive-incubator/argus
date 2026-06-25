@@ -58,6 +58,46 @@ def test_opencv_camera_uses_buffersize_one():
             del sys.modules["cv2"]
 
 
+# mirror=True flips the frame horizontally (selfie view); off by default.
+def test_opencv_camera_mirror_flips_horizontally():
+    import sys
+
+    import argus.capture.frame_source as fs
+
+    asymmetric = np.zeros((2, 3, 3), np.uint8)
+    asymmetric[:, 0, :] = 255  # bright on the LEFT column
+
+    class FakeCap:
+        def set(self, *a):
+            pass
+
+        def read(self):
+            return True, asymmetric.copy()
+
+    class FakeCv2:
+        CAP_PROP_BUFFERSIZE = CAP_PROP_FRAME_WIDTH = CAP_PROP_FRAME_HEIGHT = CAP_PROP_FPS = 0
+
+        def VideoCapture(self, idx):
+            return FakeCap()
+
+        def flip(self, img, code):
+            import numpy as _np
+            return _np.flip(img, axis=1) if code == 1 else img
+
+    backup = sys.modules.get("cv2")
+    sys.modules["cv2"] = FakeCv2()
+    try:
+        plain, _ = fs.OpenCVCamera(mirror=False).read()
+        flipped, _ = fs.OpenCVCamera(mirror=True).read()
+        assert plain[0, 0, 0] == 255 and plain[0, -1, 0] == 0    # bright stays on left
+        assert flipped[0, 0, 0] == 0 and flipped[0, -1, 0] == 255  # bright moved to right
+    finally:
+        if backup is not None:
+            sys.modules["cv2"] = backup
+        else:
+            del sys.modules["cv2"]
+
+
 # A1.AC2 — frame ts from injected clock at grab; strictly monotonic.
 def test_capture_timestamps_monotonic():
     slot = LatestFrameSlot()

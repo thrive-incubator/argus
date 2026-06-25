@@ -23,8 +23,9 @@
 <div id="ui">
   <button id="cal">Start calibration</button>
   <button id="recal" style="display:none">Recalibrate</button>
-  <div id="msg">Maximize this window (or press F for fullscreen). Sit ~50–60 cm away, keep your
-    head fairly still, then click “Start calibration” and look at each dot until it pops.</div>
+  <div id="msg">Press <b>F</b> for fullscreen. Sit ~50–60 cm away. <b>Keep your head still and move
+    only your EYES</b> — during calibration AND while using it (a webcam can't tell a head-turn
+    from an eye-move). Click “Start calibration” and flick your eyes to each dot until it pops.</div>
   <div id="acc"></div>
 </div>
 <div id="conn"><b id="cdot">●</b> <span id="cstat">connecting…</span></div>
@@ -91,7 +92,7 @@ async function calibrate(){
   err/=samples.length;
   document.getElementById("acc").textContent=`calibrated · mean error ≈ ${(err*100).toFixed(1)}% of screen`;
   document.getElementById("recal").style.display="inline-block";
-  msg("Now look around — the dot follows your gaze. Re-run if you move your head a lot.");
+  msg("Now move your EYES (keep your head still) — the dot follows your gaze. Recalibrate if you shift your head.");
   mode="tracking";
 }
 

@@ -178,7 +178,7 @@ def main() -> int:
         print(f"  - {line}")
     print("Look at the camera; HR needs ~10 s to lock, HRV ~30 s.\n")
 
-    cam = OpenCVCamera(args.camera_index, args.width, args.height, args.fps)
+    cam = OpenCVCamera(args.camera_index, args.width, args.height, args.fps, mirror=True)
     bus = InMemoryBus()
     dash = Dashboard(phase=1)
     pipe = Pipeline(extractors=extractors, face_backbone=face_bb, pose_backbone=pose_bb,

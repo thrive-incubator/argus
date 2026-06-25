@@ -22,20 +22,28 @@ class FrameSource(Protocol):
 
 
 class OpenCVCamera:
-    """Real webcam via OpenCV with CAP_PROP_BUFFERSIZE=1 (A1.AC1)."""
+    """Real webcam via OpenCV with CAP_PROP_BUFFERSIZE=1 (A1.AC1).
 
-    def __init__(self, index: int = 0, width: int = 1280, height: int = 720, fps: int = 30):
+    ``mirror=True`` horizontally flips each frame to a natural selfie view, so the camera
+    preview matches a mirror and gaze left/right is egocentric (your left = "left").
+    """
+
+    def __init__(self, index: int = 0, width: int = 1280, height: int = 720, fps: int = 30,
+                 mirror: bool = False):
         import cv2  # local import: only needed for the real device path
 
         self._cv2 = cv2
+        self.mirror = mirror
         self._cap = cv2.VideoCapture(index)  # <-- untested device-driver line
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self._cap.set(cv2.CAP_PROP_FPS, fps)
 
-    def read(self) -> tuple[np.ndarray | None, bool]:  # pragma: no cover - device
+    def read(self) -> tuple[np.ndarray | None, bool]:
         ok, frame = self._cap.read()
+        if ok and self.mirror:
+            frame = self._cv2.flip(frame, 1)  # horizontal flip -> selfie view
         return (frame if ok else None), bool(ok)
 
     def release(self) -> None:  # pragma: no cover - device

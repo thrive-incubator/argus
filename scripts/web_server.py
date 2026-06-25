@@ -124,7 +124,7 @@ def build_pipeline(synthetic: bool, bridge: WebSocketBridge):
 
         face_bb = MediaPipeFaceBackbone(str(models / "face_landmarker.task"))
         pose_bb = MediaPipePoseBackbone(str(models / "pose_landmarker.task"))
-        cam = OpenCVCamera(0, 1280, 720, int(fps))
+        cam = OpenCVCamera(0, 1280, 720, int(fps), mirror=True)  # selfie view (egocentric)
 
     pipe = Pipeline(extractors=exts, face_backbone=face_bb, pose_backbone=pose_bb,
                     emit_clock=local_clock)
