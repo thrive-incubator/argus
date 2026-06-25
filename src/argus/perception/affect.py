@@ -120,43 +120,73 @@ class AffectExtractor(Extractor):
         ]
 
 
-# EMFACS emotion prototypes (the AUs whose co-activation defines each emotion).
-EMFACS = {
-    "happiness": ["AU06", "AU12"],
-    "sadness": ["AU01", "AU04", "AU15"],
-    "surprise": ["AU01", "AU02", "AU05", "AU26"],
-    "fear": ["AU01", "AU02", "AU04", "AU05", "AU20"],
-    "anger": ["AU04", "AU05", "AU07", "AU23"],
-    "disgust": ["AU09", "AU10", "AU15"],
+# --- AU -> emotional state (research-grounded; complementary to the image-based model) ---
+# Discrete-emotion prototypes: Du, Tao & Martinez (2014, PNAS) refinement of Ekman & Friesen
+# EMFACS-7 (1983). Disgust uses the AU17 variant (AU16 is absent from py-feat); contempt is
+# treated bilaterally (laterality is not recoverable from py-feat AUs).
+EMOTION_PROTOTYPES = {
+    "happiness": ("AU06", "AU12"),
+    "sadness": ("AU01", "AU04", "AU15"),
+    "surprise": ("AU01", "AU02", "AU05", "AU26"),
+    "fear": ("AU01", "AU02", "AU04", "AU05", "AU07", "AU20", "AU26"),
+    "anger": ("AU04", "AU05", "AU07", "AU23"),
+    "disgust": ("AU09", "AU15", "AU17"),
+    "contempt": ("AU12", "AU14"),
+}
+# Inhibitors: subtract these so a real smile (AU6) isn't read as contempt, and a fear pattern
+# (AU4/7/20) isn't read as surprise.
+EMOTION_INHIBITORS = {
+    "contempt": ("AU06",),
+    "surprise": ("AU04", "AU07", "AU20"),
+}
+# Valence/arousal weights: signs/which-AUs anchored in Zhang et al. (2024, Sci Rep 14:19563)
+# + the corrugator/zygomaticus EMG consensus. Magnitudes are reasoned defaults (no single
+# published per-AU coefficient table exists for this AU set — calibrate if quantitative VA needed).
+_VALENCE_WEIGHTS = {
+    "AU06": +0.50, "AU12": +1.00,
+    "AU01": -0.30, "AU04": -0.60, "AU07": -0.30,
+    "AU09": -0.50, "AU10": -0.40, "AU15": -0.50,
+    "AU17": -0.20, "AU20": -0.40, "AU23": -0.40, "AU24": -0.30, "AU14": -0.20,
+}
+_AROUSAL_WEIGHTS = {
+    "AU01": 0.40, "AU02": 0.50, "AU04": 0.40, "AU05": 0.80, "AU07": 0.40,
+    "AU09": 0.30, "AU10": 0.30, "AU12": 0.40, "AU20": 0.50, "AU23": 0.40,
+    "AU25": 0.50, "AU26": 0.60,
 }
 
 
-def au_to_valence_arousal(au: dict) -> tuple[float, float]:
-    """Interpretable valence/arousal from FACS Action-Unit intensities (0..1).
+def au_emotion_probs(au: dict) -> dict:
+    """Weighted prototype-match over the Du/Martinez AU sets → emotion 'probabilities'."""
+    raw = {}
+    for emo, proto in EMOTION_PROTOTYPES.items():
+        s = float(np.mean([float(au.get(k, 0.0)) for k in proto]))
+        for k in EMOTION_INHIBITORS.get(emo, ()):
+            s -= float(au.get(k, 0.0))
+        raw[emo] = max(s, 0.0)
+    raw["neutral"] = max(1.0 - max(raw.values(), default=0.0), 0.0)
+    total = sum(raw.values()) or 1.0
+    return {k: v / total for k, v in raw.items()}
 
-    Valence: smile AUs (6,12) raise it; brow-lower/frown/disgust AUs (4,15,9,1,10) lower it.
-    Arousal: eye-widen / brow-raise / mouth-open AUs (5,2,26,25,7) raise it.
-    This reuses the (reliable) AUs rather than a separate emotion head, so it's robust and
-    consistent with the AU bars on screen.
+
+def au_to_emotion(au: dict, threshold: float = 0.0) -> str:
+    """Top emotion label from the prototype-match probabilities."""
+    probs = au_emotion_probs(au)
+    label = max(probs, key=probs.get)
+    return label
+
+
+def au_to_valence_arousal(au: dict, gain: float = 3.0) -> tuple[float, float]:
+    """Valence/arousal on the circumplex from AU intensities (Zhang-2024-anchored weights).
+
+    ``gain`` spreads the output across the axes since real faces rarely co-activate all AUs.
     """
-    g = lambda k: float(au.get(k, 0.0))  # noqa: E731
-    pos = (g("AU06") + g("AU12")) / 2.0
-    neg = (g("AU04") + g("AU15") + g("AU09") + 0.5 * g("AU01") + 0.5 * g("AU10")) / 3.0
-    valence = float(np.clip(pos - neg, -1.0, 1.0))
-    activation = (g("AU05") + g("AU02") + g("AU26") + g("AU25") + g("AU07")) / 3.0
-    arousal = float(np.clip(activation - 0.15, -1.0, 1.0))
+    v = sum(float(au.get(k, 0.0)) * w for k, w in _VALENCE_WEIGHTS.items())
+    a = sum(float(au.get(k, 0.0)) * w for k, w in _AROUSAL_WEIGHTS.items())
+    v_max = sum(abs(w) for w in _VALENCE_WEIGHTS.values())
+    a_max = sum(_AROUSAL_WEIGHTS.values())
+    valence = float(np.clip(v / v_max * gain, -1.0, 1.0))
+    arousal = float(np.clip(a / a_max * gain, 0.0, 1.0))
     return valence, arousal
-
-
-def au_to_emotion(au: dict, threshold: float = 0.35) -> str:
-    """Emotion label by matching AU intensities to the EMFACS prototypes (argmax)."""
-    scores = {}
-    for emo, aus in EMFACS.items():
-        present = [float(au.get(a, 0.0)) for a in aus if a in au]
-        scores[emo] = sum(present) / len(aus) if present else 0.0
-    if not scores or max(scores.values()) < threshold:
-        return "neutral"
-    return max(scores, key=scores.get)
 
 
 def cohens_d(a, b) -> float:

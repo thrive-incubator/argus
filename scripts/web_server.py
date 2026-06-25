@@ -177,6 +177,7 @@ class AuWorker(threading.Thread):
             return
         from argus.contracts import SignalRecord
         from argus.perception.affect import au_to_emotion, au_to_valence_arousal
+        va_ema = None  # smooth the noisy per-frame V/A (research recommendation)
         while not self.stop.is_set():
             frame = self.latest.get("frame")
             if frame is not None:
@@ -190,9 +191,12 @@ class AuWorker(threading.Thread):
                     # COMPLEMENTARY affect from the AUs (EMFACS) — shown under the AU bars,
                     # separate from the main HSEmotion Affect panel.
                     val, aro = au_to_valence_arousal(aus)
+                    va_ema = [val, aro] if va_ema is None else \
+                        [0.7 * va_ema[0] + 0.3 * val, 0.7 * va_ema[1] + 0.3 * aro]
+                    val, aro = va_ema
                     emo = au_to_emotion(aus)
-                    meta = {"source": "FACS-AU", "emotion": emo, "valence": round(val, 2),
-                            "arousal": round(aro, 2)}
+                    meta = {"source": "FACS-AU (Du/Martinez + Zhang'24)", "emotion": emo,
+                            "valence": round(val, 2), "arousal": round(aro, 2)}
                     self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(
                         SignalRecord("au_affect", val, 1.0, local_clock(), gate="unknown", meta=meta)))
                 except Exception:
