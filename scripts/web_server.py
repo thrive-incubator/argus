@@ -140,9 +140,12 @@ def add_fast_perception(pipe, synthetic):
         pipe.add_extractor(AffectExtractor(FakeEmotionEstimator(
             AffectEstimate("happiness", 0.6, 0.3, 0.9)), live_hz=10.0))
         return
-    # affect now comes from the FACS AUs (EMFACS valence/arousal) via the AU worker —
-    # more robust than the HSEmotion/py-feat emotion heads, and consistent with the AU bars.
-    print("  affect: ON (derived from FACS Action Units)")
+    try:  # main Affect panel: HSEmotion native valence/arousal (research-paper default)
+        from argus.perception.affect import AffectExtractor, HSEmotionEstimator
+        pipe.add_extractor(AffectExtractor(HSEmotionEstimator(), live_hz=12.0))
+        print("  affect: ON (HSEmotion native V/A)")
+    except Exception as e:
+        print(f"  affect: off ({e})")
     try:
         from argus.perception.gaze import GazeFeatureExtractor, IrisGazeExtractor
         pipe.add_extractor(IrisGazeExtractor(hz=10.0))
@@ -184,13 +187,14 @@ class AuWorker(threading.Thread):
                             rec = SignalRecord(f"au_{k}", aus[k], 1.0, local_clock(),
                                                gate="unknown", meta={"research": True})
                             self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(rec))
-                    # affect derived from the AUs (EMFACS), not a separate emotion head
+                    # COMPLEMENTARY affect from the AUs (EMFACS) — shown under the AU bars,
+                    # separate from the main HSEmotion Affect panel.
                     val, aro = au_to_valence_arousal(aus)
                     emo = au_to_emotion(aus)
-                    meta = {"label": "estimate", "is_verdict": False, "emotion": emo, "source": "AUs"}
-                    for name, value in (("affect_valence", val), ("affect_arousal", aro)):
-                        self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(
-                            SignalRecord(name, value, 1.0, local_clock(), gate="unknown", meta=meta)))
+                    meta = {"source": "FACS-AU", "emotion": emo, "valence": round(val, 2),
+                            "arousal": round(aro, 2)}
+                    self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(
+                        SignalRecord("au_affect", val, 1.0, local_clock(), gate="unknown", meta=meta)))
                 except Exception:
                     pass
             self.stop.wait(0.25 if self.estimator.device == "mps" else 1.0)
@@ -205,6 +209,9 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
     latest = {"frame": None}
     AuWorker(latest, broadcaster, stop, synthetic).start()
     posture = PostureMonitor()
+    posture_path = ROOT / "posture_baseline.json"
+    if posture.load_baseline(posture_path):  # reuse a previously saved 'good posture'
+        print("  posture: restored saved baseline")
     m: dict = {}  # latest metric values (drawn as a togglable HUD layer in the browser)
     cam_every = 3  # ~fps/3 (~10 Hz) raw frame + vector annotations
     i = 0
@@ -238,6 +245,8 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
         if state.get("set_baseline"):
             state["set_baseline"] = False
             ok_base = posture.set_baseline(feats)
+            if ok_base:
+                posture.save_baseline(posture_path)  # persist for future sessions
             broadcaster.publish_threadsafe(json.dumps({"name": "posture", "value": {
                 "status": "baseline set" if ok_base else "no face/pose — sit in frame first",
                 "issues": []}}))

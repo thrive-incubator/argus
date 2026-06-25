@@ -93,6 +93,8 @@
     <div class="sect">
       <div class="label">Action units (FACS)</div>
       <div id="au-bars"></div>
+      <div class="hint" style="margin-top:8px">FACS-based affect: <b id="au-emotion" style="color:var(--accent)">--</b>
+        · v <span id="au-val">--</span> · a <span id="au-aro">--</span></div>
     </div>
     <div class="sect">
       <div class="label">Pulse waveform <span style="color:var(--pulse)">rPPG</span></div>
@@ -226,6 +228,8 @@ function connect(){
       el.style.color=st==="good"?"var(--good)":st==="poor"?"var(--reject)":st==="fair"?"var(--usable)":"var(--dim)";
       $("posture-issues").textContent=(v.issues&&v.issues.length)?v.issues.join(" · "):(st==="good"?"looking good ✓":st==="baseline set"?"baseline captured ✓":st);break;}
     case "gaze_raw":if(cursorOn&&gazeModel&&Array.isArray(v)){const[sx,sy]=predGaze(v);const a=0.35;gz.x=gz.has?gz.x+a*(sx-gz.x):sx;gz.y=gz.has?gz.y+a*(sy-gz.y):sy;gz.has=1;}break;
+    case "au_affect":if(m.meta){$("au-emotion").textContent=m.meta.emotion;
+      $("au-val").textContent=(m.meta.valence>=0?"+":"")+m.meta.valence;$("au-aro").textContent=(m.meta.arousal>=0?"+":"")+m.meta.arousal;}break;
     default:if(m.name.startsWith("au_"))setAU(m.name,v);
   }};
 }

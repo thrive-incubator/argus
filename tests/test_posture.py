@@ -65,3 +65,14 @@ def test_side_lean_detected():
     mon.set_baseline(posture_features(_face(nose_x=0.50), _pose()))
     a = mon.assess(posture_features(_face(nose_x=0.62), _pose()))  # nose shifted right
     assert any("leaning" in i for i in a["issues"])
+
+
+def test_baseline_persistence(tmp_path):
+    mon = PostureMonitor()
+    mon.set_baseline(posture_features(_face(), _pose()))
+    p = tmp_path / "b.json"
+    assert mon.save_baseline(str(p)) is True
+    mon2 = PostureMonitor()
+    assert mon2.load_baseline(str(p)) is True and mon2.has_baseline
+    assert mon2.assess(posture_features(_face(), _pose()))["status"] == "good"
+    assert PostureMonitor().load_baseline(str(tmp_path / "missing.json")) is False

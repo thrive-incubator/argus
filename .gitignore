@@ -8,3 +8,4 @@ models/
 *.task
 *.onnx
 logs/
+posture_baseline.json

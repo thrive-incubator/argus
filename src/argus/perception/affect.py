@@ -50,18 +50,11 @@ class EmotionEstimator(Protocol):
     def estimate(self, face_crop) -> AffectEstimate: ...
 
 
-# Russell circumplex (valence, arousal) per HSEmotion emotion index:
-# 0 Anger, 1 Contempt, 2 Disgust, 3 Fear, 4 Happiness, 5 Neutral, 6 Sadness, 7 Surprise
-_VALENCE = np.array([-0.6, -0.4, -0.6, -0.6, 0.8, 0.0, -0.6, 0.3])
-_AROUSAL = np.array([0.6, 0.2, 0.3, 0.8, 0.5, 0.0, -0.4, 0.7])
-
-
 class HSEmotionEstimator:
     """Real HSEmotion adapter via the ``hsemotion-onnx`` package (enet_b0_8_va_mtl).
 
-    Valence/arousal are derived from the (reliable) 8-class emotion probabilities mapped onto
-    the circumplex — NOT the model's raw V/A head, which is weak and biased positive (so it
-    wrongly read fear as positive valence).
+    Uses the model's **native valence/arousal head** (the research-paper default, Savchenko's
+    multi-task VA model) plus its 8-class emotion label.
     """
 
     def __init__(self, model_name: str = "enet_b0_8_va_mtl"):
@@ -74,11 +67,10 @@ class HSEmotionEstimator:
 
         rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB) if face_bgr.ndim == 3 else face_bgr
         emotion, scores = self._rec.predict_emotions(rgb, logits=False)
-        probs = np.asarray(scores, dtype=float)[:8]
-        probs = probs / (probs.sum() + 1e-9)
-        valence = float(np.dot(probs, _VALENCE))
-        arousal = float(np.dot(probs, _AROUSAL))
-        return AffectEstimate(str(emotion).lower(), valence, arousal, float(probs.max()))
+        scores = np.asarray(scores, dtype=float)
+        valence, arousal = float(scores[-2]), float(scores[-1])  # native V/A head
+        confidence = float(scores[:8].max())
+        return AffectEstimate(str(emotion).lower(), valence, arousal, confidence)
 
 
 def _face_crop_bgr(ctx, pad: float = 0.15):

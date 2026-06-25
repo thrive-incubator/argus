@@ -64,6 +64,31 @@ class PostureMonitor:
     def has_baseline(self) -> bool:
         return self.baseline is not None
 
+    def save_baseline(self, path) -> bool:
+        """Persist the baseline to a JSON file for reuse across sessions."""
+        import json
+        from dataclasses import asdict
+
+        if self.baseline is None:
+            return False
+        with open(path, "w") as f:
+            json.dump(asdict(self.baseline), f)
+        return True
+
+    def load_baseline(self, path) -> bool:
+        """Load a previously saved baseline if the file exists."""
+        import json
+        import os
+
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(path) as f:
+                self.baseline = PostureFeatures(**json.load(f))
+            return True
+        except Exception:
+            return False
+
     def assess(self, feats: PostureFeatures | None) -> dict:
         if self.baseline is None or feats is None:
             return {"status": "no baseline", "issues": [], "deviation": 0.0}
