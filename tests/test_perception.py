@@ -113,3 +113,16 @@ def test_au_extractor_intensities_and_cadence():
     assert all(r.meta["research"] and 0.0 <= r.value <= 5.0 for r in out)
     assert ext.runs <= 22  # decoupled ~10 Hz, not 60
     assert any(r.name == "au_AU12" for r in out)
+
+
+# FR-9 — gaze extractor emits numeric zone codes with the zone dict in meta.
+def test_gaze_extractor_emits_zone():
+    from argus.perception.gaze import FakeGazeEstimator, GazeExtractor
+
+    ext = GazeExtractor(FakeGazeEstimator(pitch=0.0, yaw=-25.0), fps=30.0, hz=10.0)
+    out = []
+    for i in range(30):
+        out.extend(ext.consume(_ctx((i + 1) / 30.0)))
+    assert out and out[0].name == "gaze_zone"
+    assert out[0].value == -1.0  # left
+    assert out[0].meta["zone"]["horizontal"] == "left"

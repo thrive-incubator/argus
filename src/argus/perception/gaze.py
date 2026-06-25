@@ -73,6 +73,36 @@ class GazeCalibration:
         return float(out[0]), float(out[1])
 
 
+from ..contracts import Extractor, FrameContext, SignalRecord
+
+_H_CODE = {"left": -1.0, "center": 0.0, "right": 1.0}
+
+
+class GazeExtractor(Extractor):
+    """Live gaze-zone extractor (FR-9). Emits numeric zone codes; the human-readable zone
+    dict rides in ``meta``."""
+
+    name = "gaze"
+
+    def __init__(self, estimator: GazeEstimator, fps: float = 30.0, hz: float = 10.0):
+        self.estimator = estimator
+        self.period = 1.0 / hz
+        self._last: float | None = None
+
+    def consume(self, ctx: FrameContext) -> list[SignalRecord]:
+        if ctx.face is None:
+            return []
+        if self._last is not None and (ctx.ts - self._last) < self.period:
+            return []
+        self._last = ctx.ts
+        pitch, yaw = self.estimator.estimate(ctx.frame)
+        zone = gaze_to_zone(pitch, yaw)
+        return [
+            SignalRecord("gaze_zone", _H_CODE[zone["horizontal"]], 1.0, ctx.ts,
+                         gate="unknown", meta={"zone": zone, "pitch": pitch, "yaw": yaw})
+        ]
+
+
 def confusion_matrix(true_labels, pred_labels, classes) -> np.ndarray:
     idx = {c: i for i, c in enumerate(classes)}
     m = np.zeros((len(classes), len(classes)), dtype=int)
