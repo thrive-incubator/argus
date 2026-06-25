@@ -18,7 +18,7 @@ echo "=== Installing runtime dependencies ==="
 $PIP install -q --upgrade pip
 # core (already present) + live backends + OSC art bridge
 $PIP install -q numpy scipy pytest opencv-python pyxdf neurokit2 \
-    mediapipe onnxruntime python-osc bleak || {
+    mediapipe onnxruntime python-osc bleak websockets || {
   echo "NOTE: if mediapipe failed, your Python may be too new; see README."; }
 
 echo "=== Verifying backends import ==="
