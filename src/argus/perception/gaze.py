@@ -77,6 +77,55 @@ from ..contracts import Extractor, FrameContext, SignalRecord
 
 _H_CODE = {"left": -1.0, "center": 0.0, "right": 1.0}
 
+# MediaPipe 478-mesh iris + eye-corner indices.
+_L_OUT, _L_IN, _L_IRIS, _L_TOP, _L_BOT = 263, 362, 473, 386, 374
+_R_OUT, _R_IN, _R_IRIS, _R_TOP, _R_BOT = 33, 133, 468, 159, 145
+
+
+def iris_gaze_angles(landmarks: np.ndarray, yaw_scale: float = 90.0,
+                     pitch_scale: float = 60.0):
+    """Geometric gaze (yaw, pitch) in degrees from MediaPipe iris vs eye-corner offsets.
+
+    Coarse (zone-level) gaze — no model needed (ADR-09 iris front-end). Yaw>0 = looking to
+    the subject's right; pitch>0 = looking down.
+    """
+    lm = np.asarray(landmarks, dtype=float)
+
+    def h_off(out_i, in_i, iris_i):
+        mid_x = (lm[out_i, 0] + lm[in_i, 0]) / 2.0
+        width = abs(lm[out_i, 0] - lm[in_i, 0]) + 1e-9
+        return (lm[iris_i, 0] - mid_x) / width
+
+    def v_off(top_i, bot_i, iris_i):
+        mid_y = (lm[top_i, 1] + lm[bot_i, 1]) / 2.0
+        height = abs(lm[bot_i, 1] - lm[top_i, 1]) + 1e-9
+        return (lm[iris_i, 1] - mid_y) / height
+
+    yaw = (h_off(_L_OUT, _L_IN, _L_IRIS) + h_off(_R_OUT, _R_IN, _R_IRIS)) / 2.0 * yaw_scale
+    pitch = (v_off(_L_TOP, _L_BOT, _L_IRIS) + v_off(_R_TOP, _R_BOT, _R_IRIS)) / 2.0 * pitch_scale
+    return float(yaw), float(pitch)
+
+
+class IrisGazeExtractor(Extractor):
+    """Live gaze-zone extractor from MediaPipe iris geometry (no extra model)."""
+
+    name = "gaze"
+
+    def __init__(self, fps: float = 30.0, hz: float = 10.0):
+        self.period = 1.0 / hz
+        self._last: float | None = None
+
+    def consume(self, ctx: FrameContext) -> list[SignalRecord]:
+        if ctx.face is None or getattr(ctx.face, "landmarks", None) is None:
+            return []
+        if self._last is not None and (ctx.ts - self._last) < self.period:
+            return []
+        self._last = ctx.ts
+        yaw, pitch = iris_gaze_angles(ctx.face.landmarks)
+        zone = gaze_to_zone(pitch, yaw)
+        return [SignalRecord("gaze_zone", _H_CODE[zone["horizontal"]], 1.0, ctx.ts,
+                             gate="unknown", meta={"zone": zone, "yaw": yaw, "pitch": pitch})]
+
 
 class GazeExtractor(Extractor):
     """Live gaze-zone extractor (FR-9). Emits numeric zone codes; the human-readable zone

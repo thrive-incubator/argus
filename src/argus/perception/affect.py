@@ -51,21 +51,40 @@ class EmotionEstimator(Protocol):
 
 
 class HSEmotionEstimator:
-    """Real HSEmotion ONNX adapter (enet_b0_8_va_mtl)."""
+    """Real HSEmotion adapter via the ``hsemotion-onnx`` package (enet_b0_8_va_mtl).
 
-    def __init__(self, model_path: str, providers=("CPUExecutionProvider",)):
-        import onnxruntime as ort  # local import
+    The model returns 10 values: 8 emotion probabilities + valence + arousal.
+    """
 
-        self._sess = ort.InferenceSession(model_path, providers=list(providers))
-        self._labels = ["anger", "contempt", "disgust", "fear", "happy", "neutral",
-                        "sad", "surprise"]
+    def __init__(self, model_name: str = "enet_b0_8_va_mtl"):
+        from hsemotion_onnx.facial_emotions import HSEmotionRecognizer  # local import
 
-    def estimate(self, face_crop):  # pragma: no cover - model inference
-        out = self._sess.run(None, {self._sess.get_inputs()[0].name: face_crop})
-        logits, va = out[0][0], out[1][0]
-        i = int(np.argmax(logits))
-        conf = float(np.exp(logits[i]) / np.exp(logits).sum())
-        return AffectEstimate(self._labels[i], float(va[0]), float(va[1]), conf)
+        self._rec = HSEmotionRecognizer(model_name=model_name)
+
+    def estimate(self, face_bgr):  # pragma: no cover - model inference
+        import cv2
+
+        rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB) if face_bgr.ndim == 3 else face_bgr
+        emotion, scores = self._rec.predict_emotions(rgb, logits=False)
+        scores = np.asarray(scores, dtype=float)
+        valence, arousal = float(scores[-2]), float(scores[-1])
+        confidence = float(scores[:8].max())
+        return AffectEstimate(str(emotion).lower(), valence, arousal, confidence)
+
+
+def _face_crop_bgr(ctx, pad: float = 0.15):
+    """Crop the face region from the frame using landmark extent (whole frame if absent)."""
+    frame = ctx.frame
+    lm = getattr(ctx.face, "landmarks", None)
+    if lm is None:
+        return frame
+    h, w = frame.shape[:2]
+    xs, ys = lm[:, 0], lm[:, 1]
+    x0 = int(max(0, (xs.min() - pad) * w)); x1 = int(min(w, (xs.max() + pad) * w))
+    y0 = int(max(0, (ys.min() - pad) * h)); y1 = int(min(h, (ys.max() + pad) * h))
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return frame
+    return frame[y0:y1, x0:x1]
 
 
 class FakeEmotionEstimator:
@@ -90,7 +109,7 @@ class AffectExtractor(Extractor):
         if self._last is not None and (ctx.ts - self._last) < self.period:
             return []
         self._last = ctx.ts
-        est = self.estimator.estimate(ctx.frame)
+        est = self.estimator.estimate(_face_crop_bgr(ctx))
         meta = {"label": "estimate", "is_verdict": False, "emotion": est.emotion}
         return [
             SignalRecord("affect_valence", est.valence, est.confidence, ctx.ts,

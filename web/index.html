@@ -72,6 +72,23 @@
     <canvas id="breath" height="150"></canvas>
   </div>
 
+  <!-- Affect / Gaze / Action Units -->
+  <div class="panel span4">
+    <div class="label">Affect (estimate) <span id="emotion" style="color:var(--accent)"></span></div>
+    <canvas id="affect" height="180"></canvas>
+    <div class="hint">valence ↔ · arousal ↕ · model read of expression, not felt emotion</div>
+  </div>
+  <div class="panel span4">
+    <div class="label">Gaze</div>
+    <div class="big" id="gaze" style="font-size:34px">--</div>
+    <div class="hint">screen: <span id="gaze-screen">--</span> · iris geometry (zones)</div>
+  </div>
+  <div class="panel span4">
+    <div class="label">Action units (FACS)</div>
+    <div id="au-bars" style="margin-top:8px"></div>
+    <div class="hint">py-feat · 0–1 presence · ~1 Hz</div>
+  </div>
+
   <!-- secondary stats -->
   <div class="panel span12">
     <div class="grid3">
@@ -129,7 +146,45 @@ class Wave {
   }
 }
 const pulse=new Wave("pulse","#ff5d73"), breath=new Wave("breath","#5ad19b");
-function loop(){ pulse.draw(); breath.draw(); requestAnimationFrame(loop); } loop();
+
+// ---- affect circumplex (valence x, arousal y) ----
+const affect={c:$("affect"),v:0,a:0,seen:false};
+affect.ctx=affect.c.getContext("2d");
+function resizeAffect(){affect.c.width=affect.c.clientWidth*devicePixelRatio;affect.c.height=affect.c.clientHeight*devicePixelRatio;}
+resizeAffect(); window.addEventListener("resize",resizeAffect);
+function drawAffect(){
+  const ctx=affect.ctx,W=affect.c.width,H=affect.c.height,cx=W/2,cy=H/2,R=Math.min(W,H)*0.42;
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle="#26303d";ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx-R,cy);ctx.lineTo(cx+R,cy);ctx.moveTo(cx,cy-R);ctx.lineTo(cx,cy+R);ctx.stroke();
+  ctx.fillStyle="#5d6b7a";ctx.font=`${11*devicePixelRatio}px sans-serif`;
+  ctx.fillText("positive",cx+R-44*devicePixelRatio,cy-6); ctx.fillText("negative",cx-R+4,cy-6);
+  ctx.fillText("excited",cx+4,cy-R+14*devicePixelRatio); ctx.fillText("calm",cx+4,cy+R-4);
+  if(affect.seen){
+    const x=cx+Math.max(-1,Math.min(1,affect.v))*R, y=cy-Math.max(-1,Math.min(1,affect.a))*R;
+    ctx.fillStyle="#3fb6ff";ctx.beginPath();ctx.arc(x,y,7*devicePixelRatio,0,7);ctx.fill();
+    ctx.strokeStyle="rgba(63,182,255,.3)";ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,13*devicePixelRatio,0,7);ctx.stroke();
+  }
+}
+function loop(){ pulse.draw(); breath.draw(); drawAffect(); requestAnimationFrame(loop); } loop();
+
+// ---- action-unit bars ----
+const AU_LABEL={AU01:"Inner brow",AU04:"Brow furrow",AU06:"Cheek raise",AU07:"Lid tighten",
+  AU12:"Smile",AU15:"Lip depress",AU25:"Lips part"};
+function setAU(name,val){
+  const key=name.replace("au_","");
+  let row=document.getElementById("aurow-"+key);
+  if(!row){
+    row=document.createElement("div"); row.id="aurow-"+key;
+    row.style.cssText="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px";
+    row.innerHTML=`<span style="width:84px;color:var(--dim)">${AU_LABEL[key]||key}</span>
+      <span style="flex:1;height:8px;background:#1b2430;border-radius:4px;overflow:hidden">
+      <i id="aubar-${key}" style="display:block;height:100%;width:0;background:var(--accent)"></i></span>`;
+    $("au-bars").appendChild(row);
+  }
+  document.getElementById("aubar-"+key).style.width=Math.round(val*100)+"%";
+}
 
 // ---- websocket ----
 function connect(){
@@ -151,6 +206,14 @@ function connect(){
                             setTimeout(()=>d.classList.remove("flash"),120); break; }
       case "fidget": $("fidget").textContent=v.toFixed(3); break;
       case "posture_lean": $("posture").textContent=v.toFixed(3); break;
+      case "affect_valence": affect.v=v; affect.seen=true;
+        if(m.meta&&m.meta.emotion) $("emotion").textContent=m.meta.emotion; break;
+      case "affect_arousal": affect.a=v; affect.seen=true; break;
+      case "gaze_zone":
+        if(m.meta&&m.meta.zone){ $("gaze").textContent=m.meta.zone.horizontal;
+          $("gaze-screen").textContent=m.meta.zone.screen; } break;
+      default:
+        if(m.name.startsWith("au_")) setAU(m.name, v);
     }
   };
 }

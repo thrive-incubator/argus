@@ -99,14 +99,76 @@ def build_pipeline(synthetic: bool, bridge: WebSocketBridge):
     return pipe, cam, fps
 
 
+def add_fast_perception(pipe, synthetic):
+    """Add affect (HSEmotion) + gaze (iris) — both fast enough for the per-frame loop."""
+    if synthetic:
+        from argus.perception.affect import AffectEstimate, AffectExtractor, FakeEmotionEstimator
+        import math
+        # a gently varying fake affect so the demo dashboard moves
+        pipe.add_extractor(AffectExtractor(FakeEmotionEstimator(
+            AffectEstimate("happiness", 0.6, 0.3, 0.9)), live_hz=10.0))
+        return
+    try:
+        from argus.perception.affect import AffectExtractor, HSEmotionEstimator
+        pipe.add_extractor(AffectExtractor(HSEmotionEstimator(), live_hz=12.0))
+        print("  affect: ON (HSEmotion)")
+    except Exception as e:
+        print(f"  affect: off ({e})")
+    try:
+        from argus.perception.gaze import IrisGazeExtractor
+        pipe.add_extractor(IrisGazeExtractor(hz=10.0))
+        print("  gaze: ON (MediaPipe iris)")
+    except Exception as e:
+        print(f"  gaze: off ({e})")
+
+
+class AuWorker(threading.Thread):
+    """Runs py-feat AUs in the background (~1 Hz) on the latest frame and broadcasts them."""
+
+    KEY_AUS = ("AU01", "AU04", "AU06", "AU07", "AU12", "AU15", "AU25")
+
+    def __init__(self, latest, broadcaster, stop, synthetic):
+        super().__init__(daemon=True)
+        self.latest, self.broadcaster, self.stop, self.synthetic = latest, broadcaster, stop, synthetic
+        self.estimator = None
+
+    def run(self):
+        if self.synthetic:
+            return
+        try:
+            from argus.perception.au import PyFeatAuEstimator
+            self.estimator = PyFeatAuEstimator()
+            print("  action units: ON (py-feat, ~1 Hz background)")
+        except Exception as e:
+            print(f"  action units: off ({e})")
+            return
+        from argus.contracts import SignalRecord
+        while not self.stop.is_set():
+            frame = self.latest.get("frame")
+            if frame is not None:
+                try:
+                    aus = self.estimator.estimate(frame)
+                    for k in self.KEY_AUS:
+                        if k in aus:
+                            rec = SignalRecord(f"au_{k}", aus[k], 1.0, local_clock(),
+                                               gate="unknown", meta={"research": True})
+                            self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(rec))
+                except Exception:
+                    pass
+            self.stop.wait(1.0)
+
+
 def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event):
-    bridge = WebSocketBridge(transport=type("T", (), {"send": lambda self, t: None})())
-    pipe, cam, fps = build_pipeline(synthetic, bridge)
+    pipe, cam, fps = build_pipeline(synthetic, None)
+    add_fast_perception(pipe, synthetic)
+    latest = {"frame": None}
+    AuWorker(latest, broadcaster, stop, synthetic).start()
     i = 0
     while not stop.is_set():
         frame, ok = cam.read()
         if not ok:
             break
+        latest["frame"] = frame
         for r in pipe.process_frame(frame, local_clock(), i):
             broadcaster.publish_threadsafe(WebSocketBridge.to_json(r))
         i += 1

@@ -24,6 +24,13 @@ class WebSocketBridge:
 
     @staticmethod
     def to_json(record: SignalRecord) -> str:
+        def _safe(v):
+            try:
+                json.dumps(v)
+                return v
+            except (TypeError, ValueError):
+                return str(v)
+
         return json.dumps(
             {
                 "name": record.name,
@@ -32,6 +39,7 @@ class WebSocketBridge:
                 "ts": record.ts,
                 "gate": record.gate,
                 "gate_code": gate_code(record.gate),
+                "meta": {k: _safe(v) for k, v in record.meta.items()},
             }
         )
 

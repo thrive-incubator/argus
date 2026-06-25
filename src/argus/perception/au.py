@@ -35,6 +35,36 @@ class LibreFaceAuEstimator:
         return {k: float(np.clip(v, 0.0, 5.0)) for k, v in zip(AU_KEYS, out)}
 
 
+class PyFeatAuEstimator:
+    """Real Action-Unit estimator via py-feat (Detectorv2). Returns AU -> [0,1] presence.
+
+    Slow (~1 s/frame, runs its own face+landmark+AU pipeline), so it belongs in a background
+    worker, not the per-frame loop. Takes a BGR face/frame; writes a temp PNG because this
+    py-feat build wants file paths.
+    """
+
+    def __init__(self):
+        from feat import Detectorv2  # local import (heavy)
+
+        self._det = Detectorv2()
+
+    def estimate(self, face_bgr):  # pragma: no cover - heavy model
+        import os
+        import tempfile
+
+        import cv2
+
+        fd, path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            cv2.imwrite(path, face_bgr)
+            res = self._det.detect([path], progress_bar=False)
+            cols = [c for c in res.columns if str(c).startswith("AU")]
+            return {c: float(res[c].iloc[0]) for c in cols}
+        finally:
+            os.remove(path)
+
+
 class FakeAuEstimator:
     def __init__(self, intensities: dict[str, float] | None = None):
         self._i = intensities or {k: 1.0 for k in AU_KEYS}

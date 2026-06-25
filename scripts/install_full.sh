@@ -18,7 +18,7 @@ echo "=== Installing runtime dependencies ==="
 $PIP install -q --upgrade pip
 # core (already present) + live backends + OSC art bridge
 $PIP install -q numpy scipy pytest opencv-python pyxdf neurokit2 \
-    mediapipe onnxruntime python-osc bleak websockets || {
+    mediapipe onnxruntime python-osc bleak websockets hsemotion-onnx py-feat || {
   echo "NOTE: if mediapipe failed, your Python may be too new; see README."; }
 
 echo "=== Verifying backends import ==="
@@ -40,7 +40,8 @@ dl() {  # url dest
 dl "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" models/face_landmarker.task
 dl "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task" models/pose_landmarker.task
 
-echo "=== Optional ONNX models (gaze / affect / action-units) ==="
+echo "  (affect=hsemotion-onnx, gaze=MediaPipe iris built-in, AUs=py-feat; AUs need: brew install libomp)"
+echo "=== Optional extra ONNX models (gaze / affect / action-units) ==="
 echo "  These do NOT have stable single-file URLs and may need adapter tuning."
 echo "  Affect (HSEmotion): pip package 'hsemotion' ships weights; or export enet_b0_8_va_mtl to ONNX."
 echo "  Gaze (L2CS-Net):  PyTorch weights -> export to ONNX (no official ONNX release)."

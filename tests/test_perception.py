@@ -126,3 +126,17 @@ def test_gaze_extractor_emits_zone():
     assert out and out[0].name == "gaze_zone"
     assert out[0].value == -1.0  # left
     assert out[0].meta["zone"]["horizontal"] == "left"
+
+
+# Iris geometric gaze (no model) — centered vs shifted.
+def test_iris_gaze_angles():
+    from argus.perception.gaze import iris_gaze_angles
+    lm = np.zeros((478, 3))
+    lm[33]=[0.2,0.5,0]; lm[133]=[0.4,0.5,0]; lm[159]=[0.45,0.45,0]; lm[145]=[0.45,0.55,0]
+    lm[263]=[0.8,0.5,0]; lm[362]=[0.6,0.5,0]; lm[386]=[0.65,0.45,0]; lm[374]=[0.65,0.55,0]
+    lm[468]=[0.3,0.5,0]; lm[473]=[0.7,0.5,0]            # iris centered
+    yaw, pitch = iris_gaze_angles(lm)
+    assert abs(yaw) < 2 and abs(pitch) < 5
+    lm[468]=[0.35,0.5,0]; lm[473]=[0.75,0.5,0]          # both irises shifted +x
+    yaw2, _ = iris_gaze_angles(lm)
+    assert yaw2 > yaw + 10  # detectably looking to one side
