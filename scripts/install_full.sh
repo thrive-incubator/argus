@@ -14,11 +14,16 @@ if [ ! -x "$PY" ]; then
   python3 -m venv "$VENV"
 fi
 
-echo "=== Installing runtime dependencies ==="
+echo "=== Installing system deps (Homebrew) ==="
+if command -v brew >/dev/null 2>&1; then
+  brew bundle --file=Brewfile || brew install libomp || true
+else
+  echo "  Homebrew not found — py-feat AUs need OpenMP (macOS: brew install libomp)"
+fi
+
+echo "=== Installing Python dependencies (pinned via requirements) ==="
 $PIP install -q --upgrade pip
-# core (already present) + live backends + OSC art bridge
-$PIP install -q numpy scipy pytest opencv-python pyxdf neurokit2 \
-    mediapipe onnxruntime python-osc bleak websockets hsemotion-onnx py-feat || {
+$PIP install -q -r requirements-dev.txt || {
   echo "NOTE: if mediapipe failed, your Python may be too new; see README."; }
 
 echo "=== Verifying backends import ==="

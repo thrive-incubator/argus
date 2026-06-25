@@ -1,0 +1,5 @@
+# Argus — development/test requirements (includes the runtime set).
+# Install:  ./venv/bin/pip install -r requirements-dev.txt
+-r requirements.txt
+
+pytest==9.1.1
