@@ -40,11 +40,14 @@ class MediaPipeFaceBackbone:
         self._last_ts = float("-inf")
 
     def process(self, frame, ts):  # pragma: no cover - device/model inference
-        assert ts > self._last_ts, "timestamps must be strictly increasing"
+        if ts <= self._last_ts:
+            ts = self._last_ts + 1e-6
         self._last_ts = ts
+        import cv2
         import mediapipe as mp
 
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # cv2 frames are BGR; MediaPipe wants RGB
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._landmarker.detect_for_video(mp_image, int(ts * 1000))
         if not result.face_landmarks:
             return None

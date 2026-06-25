@@ -54,6 +54,12 @@ def _try(fn, label, off):
 
 def build(args):
     active, off = [], []
+    models = Path(__file__).resolve().parents[1] / "models"
+    # auto-detect downloaded models so `run_live.py` with no flags uses MediaPipe
+    if args.face_model is None and (models / "face_landmarker.task").exists():
+        args.face_model = str(models / "face_landmarker.task")
+    if args.pose_model is None and (models / "pose_landmarker.task").exists():
+        args.pose_model = str(models / "pose_landmarker.task")
 
     # --- Face backbone: MediaPipe mesh if a model is given, else OpenCV cascade ---
     face_bb = None

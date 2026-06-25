@@ -35,9 +35,11 @@ class MediaPipePoseBackbone:
         self._filter = LandmarkOneEuro()
 
     def process(self, frame, ts):  # pragma: no cover - device/model inference
+        import cv2
         import mediapipe as mp
 
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # cv2 BGR -> MediaPipe RGB
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._landmarker.detect_for_video(mp_image, int(ts * 1000))
         if not result.pose_world_landmarks:
             return None
