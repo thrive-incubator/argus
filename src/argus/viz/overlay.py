@@ -17,6 +17,8 @@ import numpy as np
 from ..dsp.roi import FOREHEAD_IDX, LEFT_CHEEK_IDX, RIGHT_CHEEK_IDX
 from ..extractors.blink_extractor import RIGHT_EYE_IDX
 
+LEFT_EYE_IDX = (362, 385, 387, 263, 373, 380)  # the other eye (for the overlay)
+
 _PULSE = (115, 93, 255)    # BGR ~ #ff5d73
 _GREEN = (155, 209, 90)    # BGR ~ #5ad19b
 _IRIS = (255, 120, 255)
@@ -128,14 +130,16 @@ def annotations(ctx, metrics: dict | None = None, mesh_step: int = 6) -> dict:
 
     Higher quality than baking pixels into the JPEG, and lets each layer be toggled in JS.
     """
-    out: dict = {"metrics": metrics or {}}
+    m = dict(metrics or {})
+    out: dict = {}
     face = getattr(ctx, "face", None)
     lm = getattr(face, "landmarks", None) if face is not None else None
     if lm is not None:
         out["mesh"] = [[float(lm[i, 0]), float(lm[i, 1])] for i in range(0, len(lm), mesh_step)]
         out["roi"] = [[float(lm[i, 0]), float(lm[i, 1])]
                       for i in (FOREHEAD_IDX, LEFT_CHEEK_IDX, RIGHT_CHEEK_IDX)]
-        out["eyes"] = [[float(lm[i, 0]), float(lm[i, 1])] for i in RIGHT_EYE_IDX]
+        out["eyes"] = [[float(lm[i, 0]), float(lm[i, 1])]
+                       for i in (*RIGHT_EYE_IDX, *LEFT_EYE_IDX)]  # both eyes
         if lm.shape[0] >= 478:
             out["iris"] = [[float(lm[i, 0]), float(lm[i, 1])] for i in (468, 473)]
             from ..perception.gaze import iris_gaze_angles
@@ -148,6 +152,12 @@ def annotations(ctx, metrics: dict | None = None, mesh_step: int = 6) -> dict:
     if pim is not None and pim.shape[0] > _R_SHOULDER:
         out["shoulders"] = [[float(pim[_L_SHOULDER, 0]), float(pim[_L_SHOULDER, 1])],
                             [float(pim[_R_SHOULDER, 0]), float(pim[_R_SHOULDER, 1])]]
+        # shoulder tilt angle (degrees from horizontal) for posture feedback
+        h, w = ctx.frame.shape[:2]
+        dx = (pim[_R_SHOULDER, 0] - pim[_L_SHOULDER, 0]) * w
+        dy = (pim[_R_SHOULDER, 1] - pim[_L_SHOULDER, 1]) * h
+        m["shoulder_tilt"] = round(float(np.degrees(np.arctan2(dy, abs(dx) + 1e-6))), 1)
+    out["metrics"] = m
     return out
 
 

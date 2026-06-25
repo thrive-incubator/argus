@@ -78,7 +78,7 @@
   <div class="panel span4">
     <div class="sect">
       <div class="label">Affect (estimate) <span id="emotion" style="color:var(--accent)"></span></div>
-      <canvas id="affect" height="150"></canvas>
+      <canvas id="affect" height="190"></canvas>
     </div>
     <div class="sect">
       <div class="label">Gaze</div>
@@ -89,11 +89,15 @@
       <div class="label">Action units (FACS)</div>
       <div id="au-bars"></div>
     </div>
+    <div class="sect">
+      <div class="label">Pulse waveform <span style="color:var(--pulse)">rPPG</span></div>
+      <canvas id="pulse" height="90"></canvas>
+    </div>
+    <div class="sect">
+      <div class="label">Breathing waveform <span style="color:var(--breath)">chest</span></div>
+      <canvas id="breath" height="90"></canvas>
+    </div>
   </div>
-
-  <!-- waveforms -->
-  <div class="panel span6"><div class="label">Pulse waveform <span style="color:var(--pulse)">rPPG</span></div><canvas id="pulse" height="120"></canvas></div>
-  <div class="panel span6"><div class="label">Breathing waveform <span style="color:var(--breath)">chest</span></div><canvas id="breath" height="120"></canvas></div>
 
   <!-- numeric stats strip -->
   <div class="panel span12"><div class="strip">
@@ -125,11 +129,20 @@ function drawOverlay(){
       for(const p of annot.roi){const[a,b]=P(p);x.strokeRect(a-h,b-h,2*h,2*h);}}
     if(layers.eyes&&annot.eyes){x.fillStyle="#5ad19b";for(const p of annot.eyes){const[a,b]=P(p);x.beginPath();x.arc(a,b,2.4*dpr,0,7);x.fill();}}
     if(layers.iris&&annot.iris){x.fillStyle="#ff78ff";for(const p of annot.iris){const[a,b]=P(p);x.beginPath();x.arc(a,b,3*dpr,0,7);x.fill();}}
-    if(layers.gaze&&annot.gaze){const[ex,ey,yaw,pitch]=annot.gaze,o=P([ex,ey]);x.strokeStyle="#b4ff00";x.lineWidth=2.4*dpr;
-      x.beginPath();x.moveTo(o[0],o[1]);x.lineTo(o[0]+yaw*4*dpr,o[1]+pitch*4*dpr);x.stroke();}
+    if(layers.gaze&&annot.gaze){const[ex,ey,yaw,pitch]=annot.gaze,o=P([ex,ey]);
+      const tip=[o[0]+yaw*7*dpr,o[1]+pitch*7*dpr],ang=Math.atan2(tip[1]-o[1],tip[0]-o[0]),hl=10*dpr;
+      x.strokeStyle="#b4ff00";x.fillStyle="#b4ff00";x.lineWidth=2.6*dpr;
+      x.beginPath();x.moveTo(o[0],o[1]);x.lineTo(tip[0],tip[1]);x.stroke();
+      x.beginPath();x.moveTo(tip[0],tip[1]);
+      x.lineTo(tip[0]-hl*Math.cos(ang-0.4),tip[1]-hl*Math.sin(ang-0.4));
+      x.lineTo(tip[0]-hl*Math.cos(ang+0.4),tip[1]-hl*Math.sin(ang+0.4));x.closePath();x.fill();}
     if(layers.shoulders&&annot.shoulders){const a=P(annot.shoulders[0]),b=P(annot.shoulders[1]);
-      x.strokeStyle="#5ad19b";x.lineWidth=3*dpr;x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);x.stroke();
-      for(const p of[a,b]){x.beginPath();x.arc(p[0],p[1],5*dpr,0,7);x.fill();}}
+      x.strokeStyle="#5ad19b";x.fillStyle="#5ad19b";x.lineWidth=3*dpr;x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);x.stroke();
+      for(const p of[a,b]){x.beginPath();x.arc(p[0],p[1],5*dpr,0,7);x.fill();}
+      const t=annot.metrics.shoulder_tilt;if(t!=null){const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+        x.font=`${13*dpr}px ${getComputedStyle(document.body).fontFamily}`;x.textAlign="center";x.textBaseline="bottom";
+        const tx=`tilt ${t}°`,col=Math.abs(t)<4?"#5ad19b":Math.abs(t)<8?"#f4c93d":"#ff5d73";
+        x.lineWidth=4*dpr;x.strokeStyle="#000";x.strokeText(tx,mx,my-10*dpr);x.fillStyle=col;x.fillText(tx,mx,my-10*dpr);x.textAlign="left";}}
     if(layers.metrics)drawHUD(x,annot.metrics);
   }
   requestAnimationFrame(drawOverlay);
@@ -140,7 +153,7 @@ function drawHUD(x,m){let y=22*dpr;const F=`${13*dpr}px ${getComputedStyle(docum
   if(m.hrv!=null)rows.push([`HRV ${m.hrv} ms`,"#9ecbff"]);
   if(m.blink!=null)rows.push([`BLINK ${m.blink}/min`,"#9ecbff"]);
   if(m.fidget!=null)rows.push([`FIDGET ${m.fidget}`,"#c0c8d0"]);
-  if(m.posture!=null)rows.push([`LEAN ${m.posture}`,"#c0c8d0"]);
+  if(m.shoulder_tilt!=null)rows.push([`SHOULDER TILT ${m.shoulder_tilt}°`,Math.abs(m.shoulder_tilt)<4?"#5ad19b":Math.abs(m.shoulder_tilt)<8?"#f4c93d":"#ff5d73"]);
   x.font=F;x.textBaseline="top";
   for(const[t,c]of rows){x.lineWidth=4*dpr;x.strokeStyle="#000";x.strokeText(t,12*dpr,y);x.fillStyle=c;x.fillText(t,12*dpr,y);y+=20*dpr;}}
 drawOverlay();
@@ -157,7 +170,7 @@ const pulse=new Wave("pulse","#ff5d73"),breath=new Wave("breath","#5ad19b");
 // ---- affect circumplex ----
 const af={c:$("affect"),v:0,a:0,seen:0};af.x=af.c.getContext("2d");
 function raf(){af.c.width=af.c.clientWidth*dpr;af.c.height=af.c.clientHeight*dpr;}raf();addEventListener("resize",raf);
-function drawAf(){const x=af.x,W=af.c.width,H=af.c.height,cx=W/2,cy=H/2,R=Math.min(W,H)*0.40,p=6*dpr;x.clearRect(0,0,W,H);
+function drawAf(){const x=af.x,W=af.c.width,H=af.c.height,cx=W/2,cy=H/2,R=Math.min(W,H)*0.32,p=8*dpr;x.clearRect(0,0,W,H);
   x.strokeStyle="#243040";x.lineWidth=1;x.beginPath();x.arc(cx,cy,R,0,7);x.stroke();x.beginPath();x.moveTo(cx-R,cy);x.lineTo(cx+R,cy);x.moveTo(cx,cy-R);x.lineTo(cx,cy+R);x.stroke();
   x.fillStyle="#5d6b7a";x.font=`${11*dpr}px sans-serif`;x.textBaseline="middle";x.textAlign="left";x.fillText("positive",cx+R+p,cy);x.textAlign="right";x.fillText("negative",cx-R-p,cy);x.textAlign="center";x.textBaseline="bottom";x.fillText("excited",cx,cy-R-p);x.textBaseline="top";x.fillText("calm",cx,cy+R+p);
   if(af.seen){const px=cx+Math.max(-1,Math.min(1,af.v))*R,py=cy-Math.max(-1,Math.min(1,af.a))*R;x.fillStyle="#3fb6ff";x.beginPath();x.arc(px,py,7*dpr,0,7);x.fill();x.strokeStyle="#3fb6ff55";x.lineWidth=2;x.beginPath();x.arc(px,py,14*dpr,0,7);x.stroke();}}
