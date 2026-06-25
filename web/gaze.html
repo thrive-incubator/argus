@@ -70,31 +70,38 @@ function predict(f){const p=poly(f);let sx=0,sy=0;for(let i=0;i<p.length;i++){sx
 
 // ---- calibration sequence ----
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-let target=null;
+let target=null, phase="";
+// Step-2 fixation points: hold gaze here while moving the head (samples head-pose variation).
+const PTS2=[[.5,.5],[.12,.12],[.88,.12],[.12,.88],[.88,.88]];
+
+async function collectAt(px,py,settle,dur,average){
+  target={x:px,y:py,pop:false,sweep:!average};
+  await sleep(settle);
+  const buf=[],t0=performance.now();
+  while(performance.now()-t0<dur){ if(feat) buf.push(feat.slice()); await sleep(35); }
+  if(average){ if(buf.length>3){ const avg=buf[0].map((_,k)=>buf.reduce((s,v)=>s+v[k],0)/buf.length);
+      samples.push({f:avg,t:[px,py]}); } }
+  else { for(let k=0;k<buf.length;k+=2) samples.push({f:buf[k],t:[px,py]}); }  // keep the varied head-pose samples
+  target.pop=true; await sleep(120);
+}
+
 async function calibrate(){
   mode="calibrating"; samples.length=0; document.getElementById("acc").textContent="";
   document.getElementById("cal").style.display="none";
-  for(let i=0;i<PTS.length;i++){
-    target={x:PTS[i][0],y:PTS[i][1],grow:0};
-    msg(`Look at the dot (${i+1}/${PTS.length})…`);
-    await sleep(750);                 // settle
-    const buf=[]; const t0=performance.now();
-    while(performance.now()-t0<850){ if(feat) buf.push(feat.slice()); await sleep(40); }
-    if(buf.length>3){
-      const avg=buf[0].map((_,k)=>buf.reduce((s,v)=>s+v[k],0)/buf.length);
-      samples.push({f:avg,t:[PTS[i][0],PTS[i][1]]});
-    }
-    target.pop=true; await sleep(120);
-  }
-  target=null;
-  model=fit(samples,1e-3);
+  // Step 1 — eyes only, head still: anchors the eye->screen mapping at the neutral head pose.
+  phase="1"; msg("Step 1 / 2 — keep your HEAD STILL and flick only your EYES to each dot.");
+  for(const p of PTS) await collectAt(p[0],p[1],700,800,true);
+  // Step 2 — fixate + move head: teaches the model that head movement must NOT move the gaze point.
+  phase="2"; msg("Step 2 / 2 — keep your EYES locked on the dot and slowly MOVE YOUR HEAD (turn left/right, up/down, tilt) until it pops.");
+  for(const p of PTS2) await collectAt(p[0],p[1],500,2600,false);
+  target=null; phase="";
+  model=fit(samples,1e-2);
   try{ localStorage.setItem("argus_gaze_model", JSON.stringify(model)); }catch(e){}  // shared with the dashboard cursor
-  // report mean calibration residual as % of screen
   let err=0; for(const s of samples){const [px,py]=predict(s.f); err+=Math.hypot(px-s.t[0],py-s.t[1]);}
   err/=samples.length;
-  document.getElementById("acc").textContent=`calibrated · mean error ≈ ${(err*100).toFixed(1)}% of screen`;
+  document.getElementById("acc").textContent=`calibrated (${samples.length} samples) · mean error ≈ ${(err*100).toFixed(1)}% of screen`;
   document.getElementById("recal").style.display="inline-block";
-  msg("Now look around — the dot follows your gaze (head pose is in the model). Recalibrate if you change seating position.");
+  msg("Now look around — the model compensates for head movement. Recalibrate if you change seating position.");
   mode="tracking";
 }
 
@@ -105,6 +112,11 @@ function draw(){
   ctx.clearRect(0,0,W(),H());
   if(mode==="calibrating" && target){
     const x=target.x*W(), y=target.y*H();
+    if(target.sweep){  // step 2: pulsing ring -> keep eyes here, move your head
+      const rr=(34+9*Math.sin(performance.now()/150))*devicePixelRatio;
+      ctx.strokeStyle="#5ad19b"; ctx.lineWidth=3*devicePixelRatio;
+      ctx.beginPath(); ctx.arc(x,y,rr,0,7); ctx.stroke();
+    }
     const r=(target.pop?28:14)*devicePixelRatio;
     ctx.fillStyle="#3fb6ff"; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill();
     ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(x,y,4*devicePixelRatio,0,7); ctx.fill();

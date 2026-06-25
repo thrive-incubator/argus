@@ -124,7 +124,7 @@ function drawOverlay(){
   const x=cv.getContext("2d"),W=cv.width,H=cv.height; x.clearRect(0,0,W,H);
   if(annot){
     const P=p=>[p[0]*W,p[1]*H];
-    if(layers.mesh&&annot.mesh){x.fillStyle="#5a6470";for(const p of annot.mesh){const[a,b]=P(p);x.fillRect(a,b,1.4*dpr,1.4*dpr);}}
+    if(layers.mesh&&annot.mesh){x.fillStyle="#9aa6b4";for(const p of annot.mesh){const[a,b]=P(p);x.beginPath();x.arc(a,b,2.4*dpr,0,7);x.fill();}}
     if(layers.roi&&annot.roi){x.strokeStyle=roiColor(annot.metrics.hr_sqi);x.lineWidth=2*dpr;const h=14*dpr;
       for(const p of annot.roi){const[a,b]=P(p);x.strokeRect(a-h,b-h,2*h,2*h);}}
     if(layers.eyes&&annot.eyes){x.fillStyle="#5ad19b";for(const p of annot.eyes){const[a,b]=P(p);x.beginPath();x.arc(a,b,2.4*dpr,0,7);x.fill();}}
