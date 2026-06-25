@@ -101,6 +101,63 @@ class PolarIngestor:
         return new_beats
 
 
+class PolarThread:
+    """Live Polar H10 reader: connects by name over BLE and streams RR/HR in a background
+    thread, feeding a ``PolarIngestor``. The bleak calls are the untested device line.
+    """
+
+    def __init__(self, name_prefix: str = "Polar H10", clock=lambda: 0.0):
+        import threading
+
+        self.name_prefix = name_prefix
+        self.ingestor = PolarIngestor(clock=clock)
+        self.latest_hr: int | None = None
+        self.status = "idle"
+        self._stop = threading.Event()
+        self._thread = None
+
+    async def _astream(self):  # pragma: no cover - BLE device
+        from bleak import BleakClient, BleakScanner
+
+        self.status = "scanning"
+        device = await BleakScanner.find_device_by_filter(
+            lambda d, ad: (d.name or "").startswith(self.name_prefix)
+        )
+        if device is None:
+            self.status = "not found"
+            return
+        self.status = "connecting"
+        async with BleakClient(device) as client:
+            self.ingestor.anchor()
+            self.status = "streaming"
+
+            def cb(_handle, data: bytearray):
+                self.ingestor.on_packet(bytes(data))
+                if self.ingestor.hr_series:
+                    self.latest_hr = self.ingestor.hr_series[-1][1]
+
+            await client.start_notify(HR_MEASUREMENT_UUID, cb)
+            import asyncio
+
+            while not self._stop.is_set():
+                await asyncio.sleep(0.1)
+            await client.stop_notify(HR_MEASUREMENT_UUID)
+        self.status = "stopped"
+
+    def start(self):  # pragma: no cover - BLE device
+        import asyncio
+        import threading
+
+        self._thread = threading.Thread(target=lambda: asyncio.run(self._astream()),
+                                        daemon=True)
+        self._thread.start()
+
+    def stop(self):  # pragma: no cover - BLE device
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+
 def run_with_reconnect(source: PolarSource, ingestor: PolarIngestor,
                        max_packets: int = 10_000, max_reconnects: int = 5) -> int:
     """Drive a source through dropouts, re-anchoring on each (re)connect. Returns packets read."""
