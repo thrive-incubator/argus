@@ -171,7 +171,7 @@ class AuWorker(threading.Thread):
         try:
             from argus.perception.au import PyFeatAuEstimator
             self.estimator = PyFeatAuEstimator()
-            print("  action units: ON (py-feat, ~1 Hz background)")
+            print(f"  action units: ON (py-feat on {self.estimator.device}, background)")
         except Exception as e:
             print(f"  action units: off ({e})")
             return
@@ -188,7 +188,7 @@ class AuWorker(threading.Thread):
                             self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(rec))
                 except Exception:
                     pass
-            self.stop.wait(1.0)
+            self.stop.wait(0.25 if self.estimator.device == "mps" else 1.0)
 
 
 def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event, state: dict):

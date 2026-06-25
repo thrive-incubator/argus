@@ -43,10 +43,17 @@ class PyFeatAuEstimator:
     py-feat build wants file paths.
     """
 
-    def __init__(self):
+    def __init__(self, device: str = "auto"):
         from feat import Detectorv2  # local import (heavy)
 
-        self._det = Detectorv2()
+        if device == "auto":
+            try:
+                import torch
+                device = "mps" if torch.backends.mps.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
+        self.device = device
+        self._det = Detectorv2(device=device)  # GPU (Apple MPS) when available
 
     def estimate(self, face_bgr):  # pragma: no cover - heavy model
         import os

@@ -42,13 +42,19 @@ class FakeGazeEstimator:
         return self.pitch, self.yaw
 
 
-def gaze_to_zone(pitch_deg: float, yaw_deg: float, yaw_lr: float = 8.0,
+def gaze_to_zone(pitch_deg: float, yaw_deg: float, yaw_lr: float = 8.0, pitch_ud: float = 7.0,
                  screen_yaw: float = 20.0, screen_pitch: float = 20.0) -> dict:
-    """Map a gaze angle to direction zones (F2.AC2 — no pixel point-of-regard)."""
+    """Map a gaze angle to direction zones (F2.AC2 — no pixel point-of-regard).
+
+    Horizontal {left,center,right} from yaw, vertical {up,center,down} from pitch
+    (pitch>0 = looking down).
+    """
     horizontal = "left" if yaw_deg < -yaw_lr else "right" if yaw_deg > yaw_lr else "center"
+    vertical = "up" if pitch_deg < -pitch_ud else "down" if pitch_deg > pitch_ud else "center"
     on_screen = abs(yaw_deg) <= screen_yaw and abs(pitch_deg) <= screen_pitch
     return {
         "horizontal": horizontal,
+        "vertical": vertical,
         "screen": "on" if on_screen else "off",
         "attention": "present" if on_screen else "absent",
     }

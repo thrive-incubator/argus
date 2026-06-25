@@ -35,8 +35,10 @@ class MotionExtractor(Extractor):
     def consume(self, ctx: FrameContext) -> list[SignalRecord]:
         if ctx.pose is None:
             return []
-        # Use a compact pose summary (shoulders centroid) for the fidget energy.
-        centroid = ctx.pose.landmarks[[LEFT_SHOULDER, RIGHT_SHOULDER]].mean(axis=0)
+        # Fidget needs the RAW (unfiltered) jitter — use image-space landmarks, which the
+        # backbone does NOT One-Euro filter (the world landmarks are filtered, killing jitter).
+        src = ctx.pose.image_landmarks if ctx.pose.image_landmarks is not None else ctx.pose.landmarks
+        centroid = src[[LEFT_SHOULDER, RIGHT_SHOULDER]].mean(axis=0)
         self._ring.append(ctx.ts, centroid)
 
         if self._last_emit is not None and (ctx.ts - self._last_emit) < self.update_period_s:
@@ -47,7 +49,7 @@ class MotionExtractor(Extractor):
         self._last_emit = ctx.ts
 
         vel = np.diff(vw, axis=0)
-        fidget = float(np.sqrt((vel**2).sum(axis=1)).mean())  # mean speed energy
+        fidget = float(np.sqrt((vel**2).sum(axis=1)).mean()) * 100.0  # scale to readable units
         lean = self._posture_lean(ctx.pose)
         return [
             SignalRecord("fidget", fidget, 1.0, ctx.ts, gate="unknown",
