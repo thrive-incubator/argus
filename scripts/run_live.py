@@ -23,11 +23,23 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+_ROOT = Path(__file__).resolve().parents[1]
+if "--verbose" not in sys.argv:  # silence noisy native libs; route stderr to a log file
+    for _k, _v in {"GLOG_minloglevel": "3", "TF_CPP_MIN_LOG_LEVEL": "3",
+                   "HF_HUB_DISABLE_PROGRESS_BARS": "1", "TRANSFORMERS_VERBOSITY": "error",
+                   "TOKENIZERS_PARALLELISM": "false"}.items():
+        os.environ.setdefault(_k, _v)
+    import warnings
+    warnings.filterwarnings("ignore")
+    (_ROOT / "logs").mkdir(exist_ok=True)
+    os.dup2(open(_ROOT / "logs" / "argus_live.log", "a", buffering=1).fileno(), 2)
+
+sys.path.insert(0, str(_ROOT / "src"))
 
 from argus.bus.osc import OscBridge, UdpTransport
 from argus.bus.outlet import InMemoryBus

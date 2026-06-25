@@ -18,11 +18,43 @@ import asyncio
 import functools
 import http.server
 import json
+import os
 import sys
 import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _quiet_native_logs(logname: str):
+    """Silence noisy native libraries (MediaPipe glog, TF-Lite, HF, objc dylib warnings).
+
+    Log levels are set BEFORE the heavy imports; the C-level stderr (fd 2) — where all that
+    noise is written — is redirected to a log file, so the console shows only our own stdout.
+    Pass --verbose to disable. Real errors still go to the log file.
+    """
+    if "--verbose" in sys.argv:
+        return None
+    os.environ.setdefault("GLOG_minloglevel", "3")
+    os.environ.setdefault("GLOG_logtostderr", "0")
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    import warnings
+
+    warnings.filterwarnings("ignore")
+    (ROOT / "logs").mkdir(exist_ok=True)
+    logf = open(ROOT / "logs" / logname, "a", buffering=1)
+    os.dup2(logf.fileno(), 2)  # native stderr noise -> log file (console stays clean)
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+    return logf
+
+
+_LOGF = _quiet_native_logs("argus_web.log")
 sys.path.insert(0, str(ROOT / "src"))
 
 from argus.bus.ws import WebSocketBridge
@@ -159,10 +191,14 @@ class AuWorker(threading.Thread):
 
 
 def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event):
+    from argus.viz.overlay import draw_debug, encode_jpeg_b64
+
     pipe, cam, fps = build_pipeline(synthetic, None)
     add_fast_perception(pipe, synthetic)
     latest = {"frame": None}
     AuWorker(latest, broadcaster, stop, synthetic).start()
+    hud: dict = {}
+    cam_every = 3  # broadcast the annotated frame at ~fps/3 (~10 Hz) to bound bandwidth
     i = 0
     while not stop.is_set():
         frame, ok = cam.read()
@@ -171,6 +207,18 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
         latest["frame"] = frame
         for r in pipe.process_frame(frame, local_clock(), i):
             broadcaster.publish_threadsafe(WebSocketBridge.to_json(r))
+            if r.name == "hr":
+                hud["hr"] = r.value
+            elif r.name == "resp":
+                hud["resp"] = r.value
+            elif r.name == "affect_valence":
+                hud["emotion"] = r.meta.get("emotion")
+            elif r.name == "gaze_zone":
+                hud["gaze"] = (r.meta.get("zone") or {}).get("horizontal")
+        if i % cam_every == 0 and pipe.last_ctx is not None:
+            b64 = encode_jpeg_b64(draw_debug(frame, pipe.last_ctx, hud))
+            if b64:
+                broadcaster.publish_threadsafe(json.dumps({"name": "camera", "value": b64}))
         i += 1
         if synthetic:  # pace the synthetic camera to ~real time
             stop.wait(1.0 / fps)

@@ -6,76 +6,97 @@
 <title>Argus — live</title>
 <style>
   :root{
-    --bg:#0a0e14; --panel:#121821; --panel2:#0e131b; --line:#1e2733;
-    --txt:#e6edf3; --dim:#7d8896; --accent:#3fb6ff; --pulse:#ff5d73; --breath:#5ad19b;
-    --good:#2ecc71; --usable:#f4c95d; --reject:#ff5d73; --unknown:#6b7785;
+    --bg:#070a0f; --panel:#10161f; --panel2:#0b1119; --line:#1c2633;
+    --txt:#e9f0f7; --dim:#7c8896; --accent:#3fb6ff; --pulse:#ff5d73; --breath:#5ad19b;
+    --good:#2ecc71; --usable:#f4c95d; --reject:#ff5d73; --unknown:#6b7785; --mono:"SF Mono",ui-monospace,Menlo,monospace;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-  header{display:flex;align-items:center;justify-content:space-between;
-    padding:16px 24px;border-bottom:1px solid var(--line);}
-  header h1{font-size:18px;margin:0;letter-spacing:.5px;font-weight:600}
-  header h1 span{color:var(--accent)}
-  #status{font-size:13px;color:var(--dim);display:flex;align-items:center;gap:8px}
+  body{margin:0;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:radial-gradient(1200px 700px at 70% -10%,#13203033,transparent),var(--bg);min-height:100vh}
+  header{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;
+    border-bottom:1px solid var(--line);backdrop-filter:blur(6px);position:sticky;top:0;z-index:5;
+    background:linear-gradient(180deg,#0a0f17ee,#0a0f1799)}
+  header h1{font-size:18px;margin:0;letter-spacing:.5px;font-weight:700}
+  header h1 b{background:linear-gradient(90deg,#3fb6ff,#5ad19b);-webkit-background-clip:text;background-clip:text;color:transparent}
+  header .sub{color:var(--dim);font-weight:400;font-size:13px;margin-left:10px}
+  #status{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:8px;text-transform:uppercase;letter-spacing:1px}
   #dot{width:9px;height:9px;border-radius:50%;background:var(--reject);transition:.3s}
-  #dot.on{background:var(--good);box-shadow:0 0 10px var(--good)}
-  .wrap{padding:24px;max-width:1200px;margin:0 auto;display:grid;gap:18px;
-    grid-template-columns:repeat(12,1fr);}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;}
-  .span4{grid-column:span 4} .span6{grid-column:span 6} .span8{grid-column:span 8}
-  .span12{grid-column:span 12}
-  .label{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;
-    display:flex;align-items:center;justify-content:space-between}
-  .big{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:64px;font-weight:600;
-    line-height:1;margin:6px 0 2px}
-  .unit{color:var(--dim);font-size:18px;font-weight:400;margin-left:6px}
-  .light{width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--unknown)}
-  .light.good{background:var(--good)} .light.usable{background:var(--usable)}
-  .light.reject{background:var(--reject)} .light.unknown{background:var(--unknown)}
-  canvas{width:100%;display:block;border-radius:8px;background:var(--panel2)}
-  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-  .stat .big{font-size:40px}
-  .hint{color:var(--dim);font-size:12px;margin-top:6px}
-  .blink-dot{width:16px;height:16px;border-radius:50%;background:#26303d;transition:.05s}
+  #dot.on{background:var(--good);box-shadow:0 0 12px var(--good);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  .wrap{padding:22px 28px;max-width:1400px;margin:0 auto;display:grid;gap:16px;grid-template-columns:repeat(12,1fr)}
+  .panel{background:linear-gradient(180deg,#121a25,#0d141d);border:1px solid var(--line);
+    border-radius:16px;padding:16px 18px;position:relative;overflow:hidden}
+  .panel:before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,#ffffff14,transparent)}
+  .span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}
+  .span7{grid-column:span 7}.span8{grid-column:span 8}.span12{grid-column:span 12}
+  .label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.2px;
+    display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .big{font-family:var(--mono);font-size:60px;font-weight:600;line-height:1;margin:4px 0 2px;
+    text-shadow:0 0 24px #3fb6ff22}
+  .stat .big{font-size:34px}
+  .unit{color:var(--dim);font-size:17px;font-weight:400;margin-left:6px}
+  .light{width:9px;height:9px;border-radius:50%;display:inline-block;background:var(--unknown)}
+  .light.good{background:var(--good);box-shadow:0 0 8px var(--good)}
+  .light.usable{background:var(--usable);box-shadow:0 0 8px var(--usable)}
+  .light.reject{background:var(--reject);box-shadow:0 0 8px var(--reject)}
+  canvas{width:100%;display:block;border-radius:10px;background:var(--panel2)}
+  .hint{color:var(--dim);font-size:11.5px;margin-top:7px}
+  /* camera hero */
+  .cam-wrap{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:16/10}
+  #cam{width:100%;height:100%;object-fit:cover;display:block;filter:saturate(1.05)}
+  #cam.empty{opacity:.25}
+  .badge{position:absolute;top:10px;right:10px;display:flex;align-items:center;gap:6px;
+    background:#000000aa;border:1px solid #ffffff22;padding:5px 9px;border-radius:20px;font-size:11px;letter-spacing:1px}
+  .badge i{width:7px;height:7px;border-radius:50%;background:var(--reject);animation:pulse 1.3s infinite}
+  .badge.on i{background:var(--good)}
+  .blink-dot{width:14px;height:14px;border-radius:50%;background:#26303d;transition:.05s}
   .blink-dot.flash{background:var(--accent);box-shadow:0 0 14px var(--accent)}
+  .au-row{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px}
+  .au-row span:first-child{width:84px;color:var(--dim)}
+  .au-track{flex:1;height:8px;background:#1b2430;border-radius:5px;overflow:hidden}
+  .au-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3fb6ff,#5ad19b);transition:width .4s}
 </style>
 </head>
 <body>
 <header>
-  <h1><span>argus</span> · live physiological sensing</h1>
+  <h1><b>argus</b><span class="sub">live physiological sensing — camera only</span></h1>
   <div id="status"><span id="dot"></span><span id="statustext">connecting…</span></div>
 </header>
 
 <div class="wrap">
+  <!-- HERO: live annotated camera -->
+  <div class="panel span8">
+    <div class="label">Camera · tracking overlay <span style="color:var(--accent)">face mesh · rPPG ROI · iris · gaze</span></div>
+    <div class="cam-wrap">
+      <img id="cam" class="empty" alt="camera feed">
+      <div class="badge" id="cam-badge"><i></i>LIVE</div>
+    </div>
+    <div class="hint">blue = rPPG ROI · green = eye (blink) · magenta = iris · arrow = gaze direction</div>
+  </div>
   <!-- Heart rate -->
   <div class="panel span4">
     <div class="label">Heart rate <span class="light" id="hr-light"></span></div>
     <div class="big"><span id="hr">--</span><span class="unit">bpm</span></div>
     <div class="hint">quality <span id="hr-sqi">--</span> · rPPG / POS</div>
+    <div class="label" style="margin-top:14px">Respiration <span class="light" id="resp-light"></span></div>
+    <div class="big" style="font-size:40px"><span id="resp">--</span><span class="unit">brpm</span></div>
+    <div class="hint">chest motion (indicative)</div>
   </div>
-  <!-- Pulse waveform -->
-  <div class="panel span8">
+
+  <!-- waveforms -->
+  <div class="panel span6">
     <div class="label">Pulse waveform <span style="color:var(--pulse)">rPPG</span></div>
     <canvas id="pulse" height="150"></canvas>
   </div>
-
-  <!-- Respiration -->
-  <div class="panel span4">
-    <div class="label">Respiration <span class="light" id="resp-light"></span></div>
-    <div class="big"><span id="resp">--</span><span class="unit">brpm</span></div>
-    <div class="hint">chest motion (indicative)</div>
-  </div>
-  <!-- Breathing waveform -->
-  <div class="panel span8">
+  <div class="panel span6">
     <div class="label">Breathing waveform <span style="color:var(--breath)">chest</span></div>
     <canvas id="breath" height="150"></canvas>
   </div>
 
-  <!-- Affect / Gaze / Action Units -->
+  <!-- perception -->
   <div class="panel span4">
     <div class="label">Affect (estimate) <span id="emotion" style="color:var(--accent)"></span></div>
-    <canvas id="affect" height="180"></canvas>
+    <canvas id="affect" height="170"></canvas>
     <div class="hint">valence ↔ · arousal ↕ · model read of expression, not felt emotion</div>
   </div>
   <div class="panel span4">
@@ -85,135 +106,92 @@
   </div>
   <div class="panel span4">
     <div class="label">Action units (FACS)</div>
-    <div id="au-bars" style="margin-top:8px"></div>
+    <div id="au-bars" style="margin-top:6px"></div>
     <div class="hint">py-feat · 0–1 presence · ~1 Hz</div>
   </div>
 
-  <!-- secondary stats -->
-  <div class="panel span12">
-    <div class="grid3">
-      <div class="stat">
-        <div class="label">HRV (SDNN)</div>
-        <div class="big"><span id="hrv">--</span><span class="unit">ms</span></div>
-        <div class="hint">rest only · indicative</div>
-      </div>
-      <div class="stat">
-        <div class="label">Blink rate <span class="blink-dot" id="blink-dot"></span></div>
-        <div class="big"><span id="blink">--</span><span class="unit">/min</span></div>
-        <div class="hint">adaptive EAR</div>
-      </div>
-      <div class="stat">
-        <div class="label">Fidget / posture</div>
-        <div class="big" style="font-size:32px"><span id="fidget">--</span></div>
-        <div class="hint">lean <span id="posture">--</span></div>
-      </div>
-    </div>
+  <!-- footer stats -->
+  <div class="panel span4 stat">
+    <div class="label">HRV (SDNN)</div>
+    <div class="big"><span id="hrv">--</span><span class="unit">ms</span></div>
+    <div class="hint">rest only · indicative</div>
+  </div>
+  <div class="panel span4 stat">
+    <div class="label">Blink rate <span class="blink-dot" id="blink-dot"></span></div>
+    <div class="big"><span id="blink">--</span><span class="unit">/min</span></div>
+    <div class="hint">adaptive EAR</div>
+  </div>
+  <div class="panel span4 stat">
+    <div class="label">Fidget / posture</div>
+    <div class="big"><span id="fidget">--</span></div>
+    <div class="hint">lean <span id="posture">--</span></div>
   </div>
 </div>
 
 <script>
 const WS_PORT = 8765;
 const $ = id => document.getElementById(id);
-
 function setLight(el, gate){ el.className = "light " + (gate||"unknown"); }
 
-// ---- scrolling waveform canvases ----
+// ---- scrolling waveforms ----
 class Wave {
-  constructor(id, color, n=300){
-    this.c = $(id); this.ctx = this.c.getContext("2d"); this.color = color;
-    this.buf = new Array(n).fill(0); this.resize();
-    window.addEventListener("resize", ()=>this.resize());
-  }
-  resize(){ this.c.width = this.c.clientWidth * devicePixelRatio;
-            this.c.height = this.c.clientHeight * devicePixelRatio; }
+  constructor(id,color){ this.c=$(id); this.ctx=this.c.getContext("2d"); this.color=color;
+    this.buf=new Array(300).fill(0); this.resize(); addEventListener("resize",()=>this.resize()); }
+  resize(){ this.c.width=this.c.clientWidth*devicePixelRatio; this.c.height=this.c.clientHeight*devicePixelRatio; }
   push(v){ this.buf.push(v); if(this.buf.length>300) this.buf.shift(); }
-  draw(){
-    const ctx=this.ctx, W=this.c.width, H=this.c.height; ctx.clearRect(0,0,W,H);
-    // grid midline
-    ctx.strokeStyle="#1b2430"; ctx.lineWidth=1; ctx.beginPath();
-    ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
-    const n=this.buf.length; let max=1e-6;
-    for(const v of this.buf) max=Math.max(max,Math.abs(v));
-    ctx.strokeStyle=this.color; ctx.lineWidth=2*devicePixelRatio; ctx.beginPath();
-    for(let i=0;i<n;i++){
-      const x=W*i/(n-1), y=H/2 - (this.buf[i]/max)*(H*0.42);
-      i? ctx.lineTo(x,y):ctx.moveTo(x,y);
-    }
-    ctx.stroke();
-    // leading glow dot
-    const lx=W, ly=H/2-(this.buf[n-1]/max)*(H*0.42);
-    ctx.fillStyle=this.color; ctx.beginPath(); ctx.arc(lx-3,ly,3*devicePixelRatio,0,7); ctx.fill();
-  }
+  draw(){ const x=this.ctx,W=this.c.width,H=this.c.height; x.clearRect(0,0,W,H);
+    x.strokeStyle="#16202c"; x.lineWidth=1; x.beginPath(); x.moveTo(0,H/2); x.lineTo(W,H/2); x.stroke();
+    const n=this.buf.length; let m=1e-6; for(const v of this.buf) m=Math.max(m,Math.abs(v));
+    const g=x.createLinearGradient(0,0,W,0); g.addColorStop(0,this.color+"00"); g.addColorStop(1,this.color);
+    x.strokeStyle=g; x.lineWidth=2.4*devicePixelRatio; x.beginPath();
+    for(let i=0;i<n;i++){ const px=W*i/(n-1), py=H/2-(this.buf[i]/m)*(H*0.42); i?x.lineTo(px,py):x.moveTo(px,py);} x.stroke();
+    const ly=H/2-(this.buf[n-1]/m)*(H*0.42); x.fillStyle=this.color; x.beginPath(); x.arc(W-3,ly,3*devicePixelRatio,0,7); x.fill(); }
 }
 const pulse=new Wave("pulse","#ff5d73"), breath=new Wave("breath","#5ad19b");
 
-// ---- affect circumplex (valence x, arousal y) ----
-const affect={c:$("affect"),v:0,a:0,seen:false};
-affect.ctx=affect.c.getContext("2d");
-function resizeAffect(){affect.c.width=affect.c.clientWidth*devicePixelRatio;affect.c.height=affect.c.clientHeight*devicePixelRatio;}
-resizeAffect(); window.addEventListener("resize",resizeAffect);
-function drawAffect(){
-  const ctx=affect.ctx,W=affect.c.width,H=affect.c.height,cx=W/2,cy=H/2,R=Math.min(W,H)*0.42;
-  ctx.clearRect(0,0,W,H);
-  ctx.strokeStyle="#26303d";ctx.lineWidth=1;
-  ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(cx-R,cy);ctx.lineTo(cx+R,cy);ctx.moveTo(cx,cy-R);ctx.lineTo(cx,cy+R);ctx.stroke();
-  ctx.fillStyle="#5d6b7a";ctx.font=`${11*devicePixelRatio}px sans-serif`;
-  ctx.fillText("positive",cx+R-44*devicePixelRatio,cy-6); ctx.fillText("negative",cx-R+4,cy-6);
-  ctx.fillText("excited",cx+4,cy-R+14*devicePixelRatio); ctx.fillText("calm",cx+4,cy+R-4);
-  if(affect.seen){
-    const x=cx+Math.max(-1,Math.min(1,affect.v))*R, y=cy-Math.max(-1,Math.min(1,affect.a))*R;
-    ctx.fillStyle="#3fb6ff";ctx.beginPath();ctx.arc(x,y,7*devicePixelRatio,0,7);ctx.fill();
-    ctx.strokeStyle="rgba(63,182,255,.3)";ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,13*devicePixelRatio,0,7);ctx.stroke();
-  }
-}
-function loop(){ pulse.draw(); breath.draw(); drawAffect(); requestAnimationFrame(loop); } loop();
+// ---- affect circumplex ----
+const affect={c:$("affect"),v:0,a:0,seen:false}; affect.ctx=affect.c.getContext("2d");
+function ra(){affect.c.width=affect.c.clientWidth*devicePixelRatio;affect.c.height=affect.c.clientHeight*devicePixelRatio;}
+ra(); addEventListener("resize",ra);
+function drawAffect(){ const x=affect.ctx,W=affect.c.width,H=affect.c.height,cx=W/2,cy=H/2,R=Math.min(W,H)*0.42;
+  x.clearRect(0,0,W,H); x.strokeStyle="#243040"; x.lineWidth=1; x.beginPath(); x.arc(cx,cy,R,0,7); x.stroke();
+  x.beginPath(); x.moveTo(cx-R,cy); x.lineTo(cx+R,cy); x.moveTo(cx,cy-R); x.lineTo(cx,cy+R); x.stroke();
+  x.fillStyle="#5d6b7a"; x.font=`${11*devicePixelRatio}px sans-serif`;
+  x.fillText("positive",cx+R-46*devicePixelRatio,cy-6); x.fillText("negative",cx-R+4,cy-6);
+  x.fillText("excited",cx+4,cy-R+14*devicePixelRatio); x.fillText("calm",cx+4,cy+R-4);
+  if(affect.seen){ const px=cx+Math.max(-1,Math.min(1,affect.v))*R, py=cy-Math.max(-1,Math.min(1,affect.a))*R;
+    x.fillStyle="#3fb6ff"; x.beginPath(); x.arc(px,py,7*devicePixelRatio,0,7); x.fill();
+    x.strokeStyle="#3fb6ff55"; x.lineWidth=2; x.beginPath(); x.arc(px,py,14*devicePixelRatio,0,7); x.stroke(); } }
+function loop(){ pulse.draw(); breath.draw(); drawAffect(); requestAnimationFrame(loop);} loop();
 
 // ---- action-unit bars ----
-const AU_LABEL={AU01:"Inner brow",AU04:"Brow furrow",AU06:"Cheek raise",AU07:"Lid tighten",
-  AU12:"Smile",AU15:"Lip depress",AU25:"Lips part"};
-function setAU(name,val){
-  const key=name.replace("au_","");
-  let row=document.getElementById("aurow-"+key);
-  if(!row){
-    row=document.createElement("div"); row.id="aurow-"+key;
-    row.style.cssText="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px";
-    row.innerHTML=`<span style="width:84px;color:var(--dim)">${AU_LABEL[key]||key}</span>
-      <span style="flex:1;height:8px;background:#1b2430;border-radius:4px;overflow:hidden">
-      <i id="aubar-${key}" style="display:block;height:100%;width:0;background:var(--accent)"></i></span>`;
-    $("au-bars").appendChild(row);
-  }
-  document.getElementById("aubar-"+key).style.width=Math.round(val*100)+"%";
-}
+const AU_LABEL={AU01:"Inner brow",AU04:"Brow furrow",AU06:"Cheek raise",AU07:"Lid tighten",AU12:"Smile",AU15:"Lip depress",AU25:"Lips part"};
+function setAU(name,val){ const k=name.replace("au_",""); let r=$("aurow-"+k);
+  if(!r){ r=document.createElement("div"); r.id="aurow-"+k; r.className="au-row";
+    r.innerHTML=`<span>${AU_LABEL[k]||k}</span><span class="au-track"><i id="aubar-${k}"></i></span>`; $("au-bars").appendChild(r);}
+  $("aubar-"+k).style.width=Math.round(Math.max(0,Math.min(1,val))*100)+"%"; }
 
 // ---- websocket ----
 function connect(){
   const ws=new WebSocket(`ws://${location.hostname}:${WS_PORT}`);
-  ws.onopen =()=>{ $("dot").classList.add("on"); $("statustext").textContent="live"; };
-  ws.onclose=()=>{ $("dot").classList.remove("on"); $("statustext").textContent="reconnecting…";
-                   setTimeout(connect,1500); };
-  ws.onmessage=e=>{
-    const m=JSON.parse(e.data); const v=m.value;
+  ws.onopen =()=>{ $("dot").classList.add("on"); $("statustext").textContent="live"; $("cam-badge").classList.add("on"); };
+  ws.onclose=()=>{ $("dot").classList.remove("on"); $("cam-badge").classList.remove("on"); $("statustext").textContent="reconnecting…"; setTimeout(connect,1500); };
+  ws.onmessage=e=>{ const m=JSON.parse(e.data), v=m.value;
     switch(m.name){
-      case "hr": $("hr").textContent=v.toFixed(0); $("hr-sqi").textContent=m.sqi.toFixed(2);
-                 setLight($("hr-light"), m.gate); break;
+      case "camera": { const im=$("cam"); im.src="data:image/jpeg;base64,"+v; im.classList.remove("empty"); break; }
+      case "hr": $("hr").textContent=v.toFixed(0); $("hr-sqi").textContent=m.sqi.toFixed(2); setLight($("hr-light"),m.gate); break;
       case "pulse_wave": pulse.push(v); break;
-      case "resp": $("resp").textContent=v.toFixed(1); setLight($("resp-light"), m.gate); break;
+      case "resp": $("resp").textContent=v.toFixed(1); setLight($("resp-light"),m.gate); break;
       case "breath_wave": breath.push(v); break;
       case "hrv": $("hrv").textContent=v.toFixed(0); break;
       case "blink_rate": $("blink").textContent=v.toFixed(1); break;
-      case "blink_event": { const d=$("blink-dot"); d.classList.add("flash");
-                            setTimeout(()=>d.classList.remove("flash"),120); break; }
+      case "blink_event": { const d=$("blink-dot"); d.classList.add("flash"); setTimeout(()=>d.classList.remove("flash"),120); break; }
       case "fidget": $("fidget").textContent=v.toFixed(3); break;
       case "posture_lean": $("posture").textContent=v.toFixed(3); break;
-      case "affect_valence": affect.v=v; affect.seen=true;
-        if(m.meta&&m.meta.emotion) $("emotion").textContent=m.meta.emotion; break;
+      case "affect_valence": affect.v=v; affect.seen=true; if(m.meta&&m.meta.emotion) $("emotion").textContent=m.meta.emotion; break;
       case "affect_arousal": affect.a=v; affect.seen=true; break;
-      case "gaze_zone":
-        if(m.meta&&m.meta.zone){ $("gaze").textContent=m.meta.zone.horizontal;
-          $("gaze-screen").textContent=m.meta.zone.screen; } break;
-      default:
-        if(m.name.startsWith("au_")) setAU(m.name, v);
+      case "gaze_zone": if(m.meta&&m.meta.zone){ $("gaze").textContent=m.meta.zone.horizontal; $("gaze-screen").textContent=m.meta.zone.screen; } break;
+      default: if(m.name.startsWith("au_")) setAU(m.name,v);
     }
   };
 }

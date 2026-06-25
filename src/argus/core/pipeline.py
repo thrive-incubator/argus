@@ -43,6 +43,7 @@ class Pipeline:
         self.snr_provider = snr_provider  # ctx -> snr dB (else from hr meta)
         self.emit_clock = emit_clock
         self.metrics = Metrics()
+        self.last_ctx = None  # most recent FrameContext (for debug overlays / viz)
 
     def add_extractor(self, extractor: Extractor) -> None:
         """NFR-7 — add an extractor without touching the backbone or bus."""
@@ -52,6 +53,7 @@ class Pipeline:
         face = self.face_backbone.process(frame, ts) if self.face_backbone else None
         pose = self.pose_backbone.process(frame, ts) if self.pose_backbone else None
         ctx = FrameContext(frame=frame, ts=ts, frame_id=frame_id, face=face, pose=pose)
+        self.last_ctx = ctx
 
         raw: list[SignalRecord] = []
         for ext in self.extractors:
