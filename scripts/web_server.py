@@ -140,12 +140,9 @@ def add_fast_perception(pipe, synthetic):
         pipe.add_extractor(AffectExtractor(FakeEmotionEstimator(
             AffectEstimate("happiness", 0.6, 0.3, 0.9)), live_hz=10.0))
         return
-    try:
-        from argus.perception.affect import AffectExtractor, HSEmotionEstimator
-        pipe.add_extractor(AffectExtractor(HSEmotionEstimator(), live_hz=12.0))
-        print("  affect: ON (HSEmotion)")
-    except Exception as e:
-        print(f"  affect: off ({e})")
+    # affect now comes from the FACS AUs (EMFACS valence/arousal) via the AU worker —
+    # more robust than the HSEmotion/py-feat emotion heads, and consistent with the AU bars.
+    print("  affect: ON (derived from FACS Action Units)")
     try:
         from argus.perception.gaze import GazeFeatureExtractor, IrisGazeExtractor
         pipe.add_extractor(IrisGazeExtractor(hz=10.0))
@@ -176,6 +173,7 @@ class AuWorker(threading.Thread):
             print(f"  action units: off ({e})")
             return
         from argus.contracts import SignalRecord
+        from argus.perception.affect import au_to_emotion, au_to_valence_arousal
         while not self.stop.is_set():
             frame = self.latest.get("frame")
             if frame is not None:
@@ -186,6 +184,13 @@ class AuWorker(threading.Thread):
                             rec = SignalRecord(f"au_{k}", aus[k], 1.0, local_clock(),
                                                gate="unknown", meta={"research": True})
                             self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(rec))
+                    # affect derived from the AUs (EMFACS), not a separate emotion head
+                    val, aro = au_to_valence_arousal(aus)
+                    emo = au_to_emotion(aus)
+                    meta = {"label": "estimate", "is_verdict": False, "emotion": emo, "source": "AUs"}
+                    for name, value in (("affect_valence", val), ("affect_arousal", aro)):
+                        self.broadcaster.publish_threadsafe(WebSocketBridge.to_json(
+                            SignalRecord(name, value, 1.0, local_clock(), gate="unknown", meta=meta)))
                 except Exception:
                     pass
             self.stop.wait(0.25 if self.estimator.device == "mps" else 1.0)

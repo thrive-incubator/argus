@@ -160,3 +160,18 @@ def test_gaze_features():
     Ry = np.array([[np.cos(th), 0, np.sin(th)], [0, 1, 0], [-np.sin(th), 0, np.cos(th)]])
     M = np.eye(4); M[:3, :3] = Ry
     assert abs(gaze_features(lm, M)[2]) > 0.2      # head yaw now non-zero
+
+
+# Affect derived from FACS Action Units (EMFACS) — the robust, interpretable path.
+def test_au_to_valence_arousal_and_emotion():
+    from argus.perception.affect import au_to_emotion, au_to_valence_arousal
+    smile = {"AU06": 0.9, "AU12": 1.0}
+    v, a = au_to_valence_arousal(smile)
+    assert v > 0.7 and au_to_emotion(smile) == "happiness"
+    frown = {"AU04": 0.8, "AU15": 0.8, "AU01": 0.6}
+    v2, _ = au_to_valence_arousal(frown)
+    assert v2 < -0.2 and au_to_emotion(frown) == "sadness"
+    wide = {"AU05": 0.8, "AU02": 0.7, "AU26": 0.7, "AU25": 0.8}
+    _, a3 = au_to_valence_arousal(wide)
+    assert a3 > 0.4
+    assert au_to_emotion({}) == "neutral"   # no AUs -> neutral

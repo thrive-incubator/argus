@@ -128,6 +128,45 @@ class AffectExtractor(Extractor):
         ]
 
 
+# EMFACS emotion prototypes (the AUs whose co-activation defines each emotion).
+EMFACS = {
+    "happiness": ["AU06", "AU12"],
+    "sadness": ["AU01", "AU04", "AU15"],
+    "surprise": ["AU01", "AU02", "AU05", "AU26"],
+    "fear": ["AU01", "AU02", "AU04", "AU05", "AU20"],
+    "anger": ["AU04", "AU05", "AU07", "AU23"],
+    "disgust": ["AU09", "AU10", "AU15"],
+}
+
+
+def au_to_valence_arousal(au: dict) -> tuple[float, float]:
+    """Interpretable valence/arousal from FACS Action-Unit intensities (0..1).
+
+    Valence: smile AUs (6,12) raise it; brow-lower/frown/disgust AUs (4,15,9,1,10) lower it.
+    Arousal: eye-widen / brow-raise / mouth-open AUs (5,2,26,25,7) raise it.
+    This reuses the (reliable) AUs rather than a separate emotion head, so it's robust and
+    consistent with the AU bars on screen.
+    """
+    g = lambda k: float(au.get(k, 0.0))  # noqa: E731
+    pos = (g("AU06") + g("AU12")) / 2.0
+    neg = (g("AU04") + g("AU15") + g("AU09") + 0.5 * g("AU01") + 0.5 * g("AU10")) / 3.0
+    valence = float(np.clip(pos - neg, -1.0, 1.0))
+    activation = (g("AU05") + g("AU02") + g("AU26") + g("AU25") + g("AU07")) / 3.0
+    arousal = float(np.clip(activation - 0.15, -1.0, 1.0))
+    return valence, arousal
+
+
+def au_to_emotion(au: dict, threshold: float = 0.35) -> str:
+    """Emotion label by matching AU intensities to the EMFACS prototypes (argmax)."""
+    scores = {}
+    for emo, aus in EMFACS.items():
+        present = [float(au.get(a, 0.0)) for a in aus if a in au]
+        scores[emo] = sum(present) / len(aus) if present else 0.0
+    if not scores or max(scores.values()) < threshold:
+        return "neutral"
+    return max(scores, key=scores.get)
+
+
 def cohens_d(a, b) -> float:
     a = np.asarray(a, dtype=float)
     b = np.asarray(b, dtype=float)
