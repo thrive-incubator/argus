@@ -55,6 +55,10 @@
   .au-row span:first-child{width:84px;color:var(--dim)}
   .au-track{flex:1;height:8px;background:#1b2430;border-radius:5px;overflow:hidden}
   .au-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3fb6ff,#5ad19b);transition:width .4s}
+  button{background:#15212e;color:var(--txt);border:1px solid #2a3a4d;border-radius:8px;
+    padding:4px 11px;font-size:11px;letter-spacing:.5px;cursor:pointer;text-transform:none}
+  button:hover{border-color:var(--accent)}
+  a{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -66,12 +70,18 @@
 <div class="wrap">
   <!-- HERO: live annotated camera -->
   <div class="panel span8">
-    <div class="label">Camera · tracking overlay <span style="color:var(--accent)">face mesh · rPPG ROI · iris · gaze</span></div>
+    <div class="label">Camera · tracking overlay
+      <span style="display:flex;gap:12px;align-items:center">
+        <a href="gaze.html" target="_blank" style="color:var(--accent);text-decoration:none">screen gaze →</a>
+        <button id="overlay-toggle">overlay: ON</button>
+      </span>
+    </div>
     <div class="cam-wrap">
       <img id="cam" class="empty" alt="camera feed">
       <div class="badge" id="cam-badge"><i></i>LIVE</div>
     </div>
-    <div class="hint">blue = rPPG ROI · green = eye (blink) · magenta = iris · arrow = gaze direction</div>
+    <div class="hint">ROI box = HR (coloured by quality) · green line = chest (respiration) ·
+      green dots = eye/blink · magenta = iris · arrow = gaze · bottom sparklines = pulse &amp; breathing</div>
   </div>
   <!-- Heart rate -->
   <div class="panel span4">
@@ -96,7 +106,7 @@
   <!-- perception -->
   <div class="panel span4">
     <div class="label">Affect (estimate) <span id="emotion" style="color:var(--accent)"></span></div>
-    <canvas id="affect" height="170"></canvas>
+    <canvas id="affect" height="210"></canvas>
     <div class="hint">valence ↔ · arousal ↕ · model read of expression, not felt emotion</div>
   </div>
   <div class="panel span4">
@@ -124,7 +134,7 @@
   <div class="panel span4 stat">
     <div class="label">Fidget / posture</div>
     <div class="big"><span id="fidget">--</span></div>
-    <div class="hint">lean <span id="posture">--</span></div>
+    <div class="hint">body-movement jitter · lean <span id="posture">--</span> · descriptive</div>
   </div>
 </div>
 
@@ -153,15 +163,18 @@ const pulse=new Wave("pulse","#ff5d73"), breath=new Wave("breath","#5ad19b");
 const affect={c:$("affect"),v:0,a:0,seen:false}; affect.ctx=affect.c.getContext("2d");
 function ra(){affect.c.width=affect.c.clientWidth*devicePixelRatio;affect.c.height=affect.c.clientHeight*devicePixelRatio;}
 ra(); addEventListener("resize",ra);
-function drawAffect(){ const x=affect.ctx,W=affect.c.width,H=affect.c.height,cx=W/2,cy=H/2,R=Math.min(W,H)*0.42;
+function drawAffect(){ const x=affect.ctx,W=affect.c.width,H=affect.c.height,cx=W/2,cy=H/2,
+    R=Math.min(W,H)*0.40, dp=devicePixelRatio, pad=6*dp;
   x.clearRect(0,0,W,H); x.strokeStyle="#243040"; x.lineWidth=1; x.beginPath(); x.arc(cx,cy,R,0,7); x.stroke();
   x.beginPath(); x.moveTo(cx-R,cy); x.lineTo(cx+R,cy); x.moveTo(cx,cy-R); x.lineTo(cx,cy+R); x.stroke();
-  x.fillStyle="#5d6b7a"; x.font=`${11*devicePixelRatio}px sans-serif`;
-  x.fillText("positive",cx+R-46*devicePixelRatio,cy-6); x.fillText("negative",cx-R+4,cy-6);
-  x.fillText("excited",cx+4,cy-R+14*devicePixelRatio); x.fillText("calm",cx+4,cy+R-4);
+  x.fillStyle="#5d6b7a"; x.font=`${11*dp}px sans-serif`;
+  x.textBaseline="middle"; x.textAlign="left";  x.fillText("positive",cx+R+pad,cy);
+  x.textAlign="right";  x.fillText("negative",cx-R-pad,cy);
+  x.textAlign="center"; x.textBaseline="bottom"; x.fillText("excited",cx,cy-R-pad);
+  x.textBaseline="top"; x.fillText("calm",cx,cy+R+pad);
   if(affect.seen){ const px=cx+Math.max(-1,Math.min(1,affect.v))*R, py=cy-Math.max(-1,Math.min(1,affect.a))*R;
-    x.fillStyle="#3fb6ff"; x.beginPath(); x.arc(px,py,7*devicePixelRatio,0,7); x.fill();
-    x.strokeStyle="#3fb6ff55"; x.lineWidth=2; x.beginPath(); x.arc(px,py,14*devicePixelRatio,0,7); x.stroke(); } }
+    x.fillStyle="#3fb6ff"; x.beginPath(); x.arc(px,py,7*dp,0,7); x.fill();
+    x.strokeStyle="#3fb6ff55"; x.lineWidth=2; x.beginPath(); x.arc(px,py,14*dp,0,7); x.stroke(); } }
 function loop(){ pulse.draw(); breath.draw(); drawAffect(); requestAnimationFrame(loop);} loop();
 
 // ---- action-unit bars ----
@@ -171,10 +184,17 @@ function setAU(name,val){ const k=name.replace("au_",""); let r=$("aurow-"+k);
     r.innerHTML=`<span>${AU_LABEL[k]||k}</span><span class="au-track"><i id="aubar-${k}"></i></span>`; $("au-bars").appendChild(r);}
   $("aubar-"+k).style.width=Math.round(Math.max(0,Math.min(1,val))*100)+"%"; }
 
+// ---- camera overlay toggle ----
+let ws=null, overlayOn=true;
+$("overlay-toggle").onclick=()=>{ overlayOn=!overlayOn;
+  $("overlay-toggle").textContent="overlay: "+(overlayOn?"ON":"OFF");
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({cmd:"overlay",on:overlayOn})); };
+
 // ---- websocket ----
 function connect(){
-  const ws=new WebSocket(`ws://${location.hostname}:${WS_PORT}`);
-  ws.onopen =()=>{ $("dot").classList.add("on"); $("statustext").textContent="live"; $("cam-badge").classList.add("on"); };
+  ws=new WebSocket(`ws://${location.hostname}:${WS_PORT}`);
+  ws.onopen =()=>{ $("dot").classList.add("on"); $("statustext").textContent="live"; $("cam-badge").classList.add("on");
+    ws.send(JSON.stringify({cmd:"overlay",on:overlayOn})); };
   ws.onclose=()=>{ $("dot").classList.remove("on"); $("cam-badge").classList.remove("on"); $("statustext").textContent="reconnecting…"; setTimeout(connect,1500); };
   ws.onmessage=e=>{ const m=JSON.parse(e.data), v=m.value;
     switch(m.name){

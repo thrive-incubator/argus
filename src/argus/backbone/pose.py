@@ -45,7 +45,11 @@ class MediaPipePoseBackbone:
             return None
         lms = np.array([[p.x, p.y, p.z] for p in result.pose_world_landmarks[0]])
         vis = np.array([p.visibility for p in result.pose_world_landmarks[0]])
-        return PoseResult(landmarks=self._filter(ts, lms), visibility=vis, ts=ts)
+        img = None
+        if result.pose_landmarks:  # normalised image-space coords for overlays
+            img = np.array([[p.x, p.y, p.z] for p in result.pose_landmarks[0]])
+        return PoseResult(landmarks=self._filter(ts, lms), visibility=vis, ts=ts,
+                          image_landmarks=img)
 
 
 class SyntheticPoseBackbone:

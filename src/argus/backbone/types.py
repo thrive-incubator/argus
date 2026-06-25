@@ -31,11 +31,15 @@ class FaceResult:
 
 @dataclass(frozen=True)
 class PoseResult:
-    """One MediaPipe Pose result with per-landmark visibility (A3.AC1/AC3)."""
+    """One MediaPipe Pose result with per-landmark visibility (A3.AC1/AC3).
+
+    ``image_landmarks`` (optional) are normalised image-space coords for drawing overlays.
+    """
 
     landmarks: np.ndarray  # (33, 3) world landmarks
     visibility: np.ndarray  # (33,) in [0, 1]
     ts: float
+    image_landmarks: np.ndarray | None = None  # (33, 3) normalised image coords
 
     def __post_init__(self) -> None:
         assert self.landmarks.shape == (N_POSE_LANDMARKS, 3)

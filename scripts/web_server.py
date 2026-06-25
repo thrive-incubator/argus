@@ -147,9 +147,10 @@ def add_fast_perception(pipe, synthetic):
     except Exception as e:
         print(f"  affect: off ({e})")
     try:
-        from argus.perception.gaze import IrisGazeExtractor
+        from argus.perception.gaze import GazeFeatureExtractor, IrisGazeExtractor
         pipe.add_extractor(IrisGazeExtractor(hz=10.0))
-        print("  gaze: ON (MediaPipe iris)")
+        pipe.add_extractor(GazeFeatureExtractor(hz=20.0))  # for /gaze.html calibration
+        print("  gaze: ON (MediaPipe iris + screen-gaze features)")
     except Exception as e:
         print(f"  gaze: off ({e})")
 
@@ -190,7 +191,9 @@ class AuWorker(threading.Thread):
             self.stop.wait(1.0)
 
 
-def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event):
+def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event, state: dict):
+    from collections import deque
+
     from argus.viz.overlay import draw_debug, encode_jpeg_b64
 
     pipe, cam, fps = build_pipeline(synthetic, None)
@@ -198,7 +201,9 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
     latest = {"frame": None}
     AuWorker(latest, broadcaster, stop, synthetic).start()
     hud: dict = {}
-    cam_every = 3  # broadcast the annotated frame at ~fps/3 (~10 Hz) to bound bandwidth
+    pulse_hist: deque = deque(maxlen=120)
+    breath_hist: deque = deque(maxlen=120)
+    cam_every = 3  # broadcast the camera frame at ~fps/3 (~10 Hz) to bound bandwidth
     i = 0
     while not stop.is_set():
         frame, ok = cam.read()
@@ -209,14 +214,24 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
             broadcaster.publish_threadsafe(WebSocketBridge.to_json(r))
             if r.name == "hr":
                 hud["hr"] = r.value
+                hud["hr_sqi"] = r.sqi
             elif r.name == "resp":
                 hud["resp"] = r.value
+            elif r.name == "pulse_wave":
+                pulse_hist.append(r.value)
+            elif r.name == "breath_wave":
+                breath_hist.append(r.value)
             elif r.name == "affect_valence":
                 hud["emotion"] = r.meta.get("emotion")
             elif r.name == "gaze_zone":
                 hud["gaze"] = (r.meta.get("zone") or {}).get("horizontal")
         if i % cam_every == 0 and pipe.last_ctx is not None:
-            b64 = encode_jpeg_b64(draw_debug(frame, pipe.last_ctx, hud))
+            if state.get("overlay", True):
+                img = draw_debug(frame, pipe.last_ctx, hud,
+                                 {"pulse": list(pulse_hist), "breath": list(breath_hist)})
+            else:
+                img = frame  # raw feed, overlays off
+            b64 = encode_jpeg_b64(img)
             if b64:
                 broadcaster.publish_threadsafe(json.dumps({"name": "camera", "value": b64}))
         i += 1
@@ -234,11 +249,18 @@ def serve_http(port: int):
 
 async def amain(args):
     broadcaster_holder = {}
+    state = {"overlay": True}  # camera debug overlays on/off (toggled from the browser)
 
     async def handler(ws):
         broadcaster_holder["b"].clients.add(ws)
         try:
-            await ws.wait_closed()
+            async for raw in ws:  # accept commands from the browser (e.g. overlay toggle)
+                try:
+                    msg = json.loads(raw)
+                    if msg.get("cmd") == "overlay":
+                        state["overlay"] = bool(msg.get("on", True))
+                except Exception:
+                    pass
         finally:
             broadcaster_holder["b"].clients.discard(ws)
 
@@ -254,7 +276,7 @@ async def amain(args):
     print("camera:", "SYNTHETIC" if args.synthetic else "REAL webcam (MediaPipe)")
 
     threading.Thread(target=pipeline_thread,
-                     args=(args.synthetic, broadcaster_holder["b"], stop), daemon=True).start()
+                     args=(args.synthetic, broadcaster_holder["b"], stop, state), daemon=True).start()
 
     async with websockets.serve(handler, "127.0.0.1", args.ws_port):
         try:

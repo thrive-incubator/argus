@@ -106,6 +106,47 @@ def iris_gaze_angles(landmarks: np.ndarray, yaw_scale: float = 90.0,
     return float(yaw), float(pitch)
 
 
+def gaze_features(landmarks: np.ndarray) -> list[float]:
+    """Compact feature vector for *calibrated screen-gaze* regression.
+
+    Per-eye iris offset within the eye (normalised by eye width/height) captures eye
+    rotation; nose-tip position captures head translation. The calibration regression maps
+    these to screen coordinates for the user's specific camera/screen geometry.
+    Returns [r_ix, r_iy, l_ix, l_iy, nose_x, nose_y].
+    """
+    lm = np.asarray(landmarks, dtype=float)
+
+    def eye(inner, outer, top, bot, iris):
+        cx = (lm[inner, 0] + lm[outer, 0]) / 2.0
+        cy = (lm[top, 1] + lm[bot, 1]) / 2.0
+        wx = abs(lm[outer, 0] - lm[inner, 0]) + 1e-6
+        hy = abs(lm[bot, 1] - lm[top, 1]) + 1e-6
+        return (lm[iris, 0] - cx) / wx, (lm[iris, 1] - cy) / hy
+
+    r_ix, r_iy = eye(133, 33, 159, 145, 468)   # image-left eye
+    l_ix, l_iy = eye(362, 263, 386, 374, 473)  # image-right eye
+    return [r_ix, r_iy, l_ix, l_iy, float(lm[1, 0]), float(lm[1, 1])]
+
+
+class GazeFeatureExtractor(Extractor):
+    """Emits the raw gaze feature vector for browser-side screen-gaze calibration."""
+
+    name = "gaze_raw"
+
+    def __init__(self, fps: float = 30.0, hz: float = 20.0):
+        self.period = 1.0 / hz
+        self._last: float | None = None
+
+    def consume(self, ctx: FrameContext) -> list[SignalRecord]:
+        if ctx.face is None or getattr(ctx.face, "landmarks", None) is None:
+            return []
+        if self._last is not None and (ctx.ts - self._last) < self.period:
+            return []
+        self._last = ctx.ts
+        return [SignalRecord("gaze_raw", gaze_features(ctx.face.landmarks), 1.0, ctx.ts,
+                             gate="unknown", meta={})]
+
+
 class IrisGazeExtractor(Extractor):
     """Live gaze-zone extractor from MediaPipe iris geometry (no extra model)."""
 

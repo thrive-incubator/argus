@@ -140,3 +140,18 @@ def test_iris_gaze_angles():
     lm[468]=[0.35,0.5,0]; lm[473]=[0.75,0.5,0]          # both irises shifted +x
     yaw2, _ = iris_gaze_angles(lm)
     assert yaw2 > yaw + 10  # detectably looking to one side
+
+
+# Screen-gaze feature vector (for calibration).
+def test_gaze_features():
+    from argus.perception.gaze import gaze_features
+    lm = np.zeros((478, 3))
+    lm[133]=[.4,.5,0]; lm[33]=[.2,.5,0]; lm[159]=[.3,.45,0]; lm[145]=[.3,.55,0]; lm[468]=[.3,.5,0]
+    lm[362]=[.6,.5,0]; lm[263]=[.8,.5,0]; lm[386]=[.7,.45,0]; lm[374]=[.7,.55,0]; lm[473]=[.7,.5,0]
+    lm[1]=[.5,.6,0]
+    f = gaze_features(lm)
+    assert len(f) == 6
+    assert abs(f[0]) < 0.1 and abs(f[2]) < 0.1   # centered iris -> ~0 offset
+    assert f[4] == 0.5 and f[5] == 0.6           # nose position carried through
+    lm[468] = [.35, .5, 0]                         # shift right-eye iris
+    assert gaze_features(lm)[0] > f[0]
