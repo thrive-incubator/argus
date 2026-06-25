@@ -86,6 +86,11 @@
       <div class="hint">screen: <span id="gaze-screen">--</span> · iris geometry (zones)</div>
     </div>
     <div class="sect">
+      <div class="label">Posture <button id="posture-cal" style="font-size:10px">set good posture</button></div>
+      <div class="big" id="posture-status" style="font-size:26px">--</div>
+      <div class="hint" id="posture-issues">sit up straight, then click “set good posture”</div>
+    </div>
+    <div class="sect">
       <div class="label">Action units (FACS)</div>
       <div id="au-bars"></div>
     </div>
@@ -154,6 +159,7 @@ function drawHUD(x,m){let y=22*dpr;const F=`${13*dpr}px ${getComputedStyle(docum
   if(m.blink!=null)rows.push([`BLINK ${m.blink}/min`,"#9ecbff"]);
   if(m.fidget!=null)rows.push([`FIDGET ${m.fidget}`,"#c0c8d0"]);
   if(m.shoulder_tilt!=null)rows.push([`SHOULDER TILT ${m.shoulder_tilt}°`,Math.abs(m.shoulder_tilt)<4?"#5ad19b":Math.abs(m.shoulder_tilt)<8?"#f4c93d":"#ff5d73"]);
+  if(m.posture_status)rows.push([`POSTURE ${m.posture_status}`,m.posture_status==="good"?"#5ad19b":m.posture_status==="poor"?"#ff5d73":"#f4c93d"]);
   x.font=F;x.textBaseline="top";
   for(const[t,c]of rows){x.lineWidth=4*dpr;x.strokeStyle="#000";x.strokeText(t,12*dpr,y);x.fillStyle=c;x.fillText(t,12*dpr,y);y+=20*dpr;}}
 drawOverlay();
@@ -189,6 +195,7 @@ function poly(f){const z=[f[0],f[1],f[2],f[3],f[4]-0.5,f[5]-0.5],t=[1];for(let i
 function predGaze(f){const p=poly(f);let sx=0,sy=0;for(let i=0;i<p.length;i++){sx+=p[i]*gazeModel[i][0];sy+=p[i]*gazeModel[i][1];}return[sx,sy];}
 $("cursor-chip").onclick=()=>{ if(!gazeModel){alert("Calibrate first on the gaze page (click “calibrate →”).");return;}
   cursorOn=!cursorOn;$("cursor-chip").classList.toggle("on");$("gazecur").style.display=cursorOn?"block":"none";};
+$("posture-cal").onclick=()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:"set_posture_baseline"})); };
 function drawCursor(){const cv=$("gazecur");if(cursorOn&&gz.has){cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;const x=cv.getContext("2d");x.clearRect(0,0,cv.width,cv.height);
   const px=gz.x*cv.width,py=gz.y*cv.height,g=x.createRadialGradient(px,py,0,px,py,80*dpr);g.addColorStop(0,"#3fb6ffcc");g.addColorStop(1,"#3fb6ff00");
   x.fillStyle=g;x.beginPath();x.arc(px,py,80*dpr,0,7);x.fill();x.fillStyle="#fff";x.beginPath();x.arc(px,py,6*dpr,0,7);x.fill();}
@@ -215,6 +222,9 @@ function connect(){
     case "affect_valence":af.v=v;af.seen=1;if(m.meta&&m.meta.emotion)$("emotion").textContent=m.meta.emotion;break;
     case "affect_arousal":af.a=v;af.seen=1;break;
     case "gaze_zone":if(m.meta&&m.meta.zone){const z=m.meta.zone;$("gaze").textContent=z.vertical&&z.vertical!=="center"?z.vertical+" "+z.horizontal:z.horizontal;$("gaze-screen").textContent=z.screen;}break;
+    case "posture":{const st=v.status,el=$("posture-status");el.textContent=st;
+      el.style.color=st==="good"?"var(--good)":st==="poor"?"var(--reject)":st==="fair"?"var(--usable)":"var(--dim)";
+      $("posture-issues").textContent=(v.issues&&v.issues.length)?v.issues.join(" · "):(st==="good"?"looking good ✓":st==="baseline set"?"baseline captured ✓":st);break;}
     case "gaze_raw":if(cursorOn&&gazeModel&&Array.isArray(v)){const[sx,sy]=predGaze(v);const a=0.35;gz.x=gz.has?gz.x+a*(sx-gz.x):sx;gz.y=gz.has?gz.y+a*(sy-gz.y):sy;gz.has=1;}break;
     default:if(m.name.startsWith("au_"))setAU(m.name,v);
   }};

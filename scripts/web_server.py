@@ -192,12 +192,14 @@ class AuWorker(threading.Thread):
 
 
 def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event, state: dict):
+    from argus.perception.posture import PostureMonitor, posture_features
     from argus.viz.overlay import annotations, encode_jpeg_b64
 
     pipe, cam, fps = build_pipeline(synthetic, None)
     add_fast_perception(pipe, synthetic)
     latest = {"frame": None}
     AuWorker(latest, broadcaster, stop, synthetic).start()
+    posture = PostureMonitor()
     m: dict = {}  # latest metric values (drawn as a togglable HUD layer in the browser)
     cam_every = 3  # ~fps/3 (~10 Hz) raw frame + vector annotations
     i = 0
@@ -222,6 +224,24 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
                 m["posture"] = round(r.value, 3)
             elif r.name == "affect_valence":
                 m["emotion"] = r.meta.get("emotion")
+        # posture monitor (relative to a captured 'good posture' baseline)
+        feats = None
+        if pipe.last_ctx is not None:
+            flm = getattr(pipe.last_ctx.face, "landmarks", None) if pipe.last_ctx.face else None
+            pim = getattr(pipe.last_ctx.pose, "image_landmarks", None) if pipe.last_ctx.pose else None
+            feats = posture_features(flm, pim)
+        if state.get("set_baseline"):
+            state["set_baseline"] = False
+            ok_base = posture.set_baseline(feats)
+            broadcaster.publish_threadsafe(json.dumps({"name": "posture", "value": {
+                "status": "baseline set" if ok_base else "no face/pose — sit in frame first",
+                "issues": []}}))
+        if posture.has_baseline and feats is not None:
+            assessment = posture.assess(feats)
+            m["posture_status"] = assessment["status"]
+            if i % cam_every == 0:
+                broadcaster.publish_threadsafe(json.dumps({"name": "posture", "value": assessment}))
+
         if i % cam_every == 0 and pipe.last_ctx is not None:
             b64 = encode_jpeg_b64(frame)  # RAW (mirrored) frame; overlays drawn in JS
             if b64:
@@ -253,6 +273,8 @@ async def amain(args):
                     msg = json.loads(raw)
                     if msg.get("cmd") == "overlay":
                         state["overlay"] = bool(msg.get("on", True))
+                    elif msg.get("cmd") == "set_posture_baseline":
+                        state["set_baseline"] = True
                 except Exception:
                     pass
         finally:
