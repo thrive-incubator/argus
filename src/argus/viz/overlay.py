@@ -123,6 +123,34 @@ def _draw_hud(img, hud: dict) -> None:
         y += 24
 
 
+def annotations(ctx, metrics: dict | None = None, mesh_step: int = 6) -> dict:
+    """Vector annotations (normalised coords) for the browser to draw over the raw frame.
+
+    Higher quality than baking pixels into the JPEG, and lets each layer be toggled in JS.
+    """
+    out: dict = {"metrics": metrics or {}}
+    face = getattr(ctx, "face", None)
+    lm = getattr(face, "landmarks", None) if face is not None else None
+    if lm is not None:
+        out["mesh"] = [[float(lm[i, 0]), float(lm[i, 1])] for i in range(0, len(lm), mesh_step)]
+        out["roi"] = [[float(lm[i, 0]), float(lm[i, 1])]
+                      for i in (FOREHEAD_IDX, LEFT_CHEEK_IDX, RIGHT_CHEEK_IDX)]
+        out["eyes"] = [[float(lm[i, 0]), float(lm[i, 1])] for i in RIGHT_EYE_IDX]
+        if lm.shape[0] >= 478:
+            out["iris"] = [[float(lm[i, 0]), float(lm[i, 1])] for i in (468, 473)]
+            from ..perception.gaze import iris_gaze_angles
+            yaw, pitch = iris_gaze_angles(lm)
+            ex = (lm[468, 0] + lm[473, 0]) / 2.0
+            ey = (lm[468, 1] + lm[473, 1]) / 2.0
+            out["gaze"] = [float(ex), float(ey), float(yaw), float(pitch)]
+    pose = getattr(ctx, "pose", None)
+    pim = getattr(pose, "image_landmarks", None) if pose is not None else None
+    if pim is not None and pim.shape[0] > _R_SHOULDER:
+        out["shoulders"] = [[float(pim[_L_SHOULDER, 0]), float(pim[_L_SHOULDER, 1])],
+                            [float(pim[_R_SHOULDER, 0]), float(pim[_R_SHOULDER, 1])]]
+    return out
+
+
 def encode_jpeg_b64(img: np.ndarray, max_width: int = 540, quality: int = 60) -> str:
     import base64
 

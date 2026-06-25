@@ -88,6 +88,7 @@ async function calibrate(){
   }
   target=null;
   model=fit(samples,1e-3);
+  try{ localStorage.setItem("argus_gaze_model", JSON.stringify(model)); }catch(e){}  // shared with the dashboard cursor
   // report mean calibration residual as % of screen
   let err=0; for(const s of samples){const [px,py]=predict(s.f); err+=Math.hypot(px-s.t[0],py-s.t[1]);}
   err/=samples.length;

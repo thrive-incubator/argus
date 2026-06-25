@@ -192,18 +192,14 @@ class AuWorker(threading.Thread):
 
 
 def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event, state: dict):
-    from collections import deque
-
-    from argus.viz.overlay import draw_debug, encode_jpeg_b64
+    from argus.viz.overlay import annotations, encode_jpeg_b64
 
     pipe, cam, fps = build_pipeline(synthetic, None)
     add_fast_perception(pipe, synthetic)
     latest = {"frame": None}
     AuWorker(latest, broadcaster, stop, synthetic).start()
-    hud: dict = {}
-    pulse_hist: deque = deque(maxlen=120)
-    breath_hist: deque = deque(maxlen=120)
-    cam_every = 3  # broadcast the camera frame at ~fps/3 (~10 Hz) to bound bandwidth
+    m: dict = {}  # latest metric values (drawn as a togglable HUD layer in the browser)
+    cam_every = 3  # ~fps/3 (~10 Hz) raw frame + vector annotations
     i = 0
     while not stop.is_set():
         frame, ok = cam.read()
@@ -213,27 +209,25 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
         for r in pipe.process_frame(frame, local_clock(), i):
             broadcaster.publish_threadsafe(WebSocketBridge.to_json(r))
             if r.name == "hr":
-                hud["hr"] = r.value
-                hud["hr_sqi"] = r.sqi
+                m["hr"] = round(r.value, 0); m["hr_sqi"] = round(r.sqi, 2)
             elif r.name == "resp":
-                hud["resp"] = r.value
-            elif r.name == "pulse_wave":
-                pulse_hist.append(r.value)
-            elif r.name == "breath_wave":
-                breath_hist.append(r.value)
+                m["resp"] = round(r.value, 1)
+            elif r.name == "hrv":
+                m["hrv"] = round(r.value, 0)
+            elif r.name == "blink_rate":
+                m["blink"] = round(r.value, 1)
+            elif r.name == "fidget":
+                m["fidget"] = round(r.value, 2)
+            elif r.name == "posture_lean":
+                m["posture"] = round(r.value, 3)
             elif r.name == "affect_valence":
-                hud["emotion"] = r.meta.get("emotion")
-            elif r.name == "gaze_zone":
-                hud["gaze"] = (r.meta.get("zone") or {}).get("horizontal")
+                m["emotion"] = r.meta.get("emotion")
         if i % cam_every == 0 and pipe.last_ctx is not None:
-            if state.get("overlay", True):
-                img = draw_debug(frame, pipe.last_ctx, hud,
-                                 {"pulse": list(pulse_hist), "breath": list(breath_hist)})
-            else:
-                img = frame  # raw feed, overlays off
-            b64 = encode_jpeg_b64(img)
+            b64 = encode_jpeg_b64(frame)  # RAW (mirrored) frame; overlays drawn in JS
             if b64:
                 broadcaster.publish_threadsafe(json.dumps({"name": "camera", "value": b64}))
+                annot = annotations(pipe.last_ctx, m)
+                broadcaster.publish_threadsafe(json.dumps({"name": "annot", "value": annot}))
         i += 1
         if synthetic:  # pace the synthetic camera to ~real time
             stop.wait(1.0 / fps)

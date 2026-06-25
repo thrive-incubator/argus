@@ -27,3 +27,16 @@ def test_draw_debug_no_face():
     ctx = FrameContext(frame=frame, ts=0.1, frame_id=0, face=None, pose=None)
     img = draw_debug(frame, ctx, hud={})  # must not crash with no face
     assert img.shape == frame.shape
+
+
+def test_annotations_vectors():
+    from argus.viz.overlay import annotations
+    frame = np.full((120, 160, 3), 60, np.uint8)
+    face = SyntheticFaceBackbone().process(frame, ts=0.1)
+    ctx = FrameContext(frame=frame, ts=0.1, frame_id=0, face=face, pose=None)
+    a = annotations(ctx, {"hr": 72, "hr_sqi": 0.8})
+    assert "mesh" in a and len(a["mesh"]) > 10
+    assert len(a["roi"]) == 3 and len(a["iris"]) == 2 and len(a["gaze"]) == 4
+    assert a["metrics"]["hr"] == 72
+    import json
+    json.dumps(a)  # must be JSON-serializable for the websocket
