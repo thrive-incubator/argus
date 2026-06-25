@@ -151,7 +151,12 @@ def test_gaze_features():
     lm[1]=[.5,.6,0]
     f = gaze_features(lm)
     assert len(f) == 6
-    assert abs(f[0]) < 0.1 and abs(f[2]) < 0.1   # centered iris -> ~0 offset
+    assert abs(f[0]) < 0.1                         # centered iris -> ~0 eye offset
+    assert abs(f[2]) < 0.1 and abs(f[3]) < 0.1    # no head_pose -> 0 head yaw/pitch
     assert f[4] == 0.5 and f[5] == 0.6           # nose position carried through
     lm[468] = [.35, .5, 0]                         # shift right-eye iris
     assert gaze_features(lm)[0] > f[0]
+    th = np.radians(30)                            # head rotation enters the features
+    Ry = np.array([[np.cos(th), 0, np.sin(th)], [0, 1, 0], [-np.sin(th), 0, np.cos(th)]])
+    M = np.eye(4); M[:3, :3] = Ry
+    assert abs(gaze_features(lm, M)[2]) > 0.2      # head yaw now non-zero

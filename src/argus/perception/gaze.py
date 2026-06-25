@@ -106,13 +106,29 @@ def iris_gaze_angles(landmarks: np.ndarray, yaw_scale: float = 90.0,
     return float(yaw), float(pitch)
 
 
-def gaze_features(landmarks: np.ndarray) -> list[float]:
+def head_angles(head_pose) -> tuple[float, float, float]:
+    """(yaw, pitch, roll) degrees from a 4x4 head-pose matrix (scale-normalised)."""
+    if head_pose is None:
+        return 0.0, 0.0, 0.0
+    R = np.asarray(head_pose, dtype=float)[:3, :3].copy()
+    for c in range(3):  # strip scale
+        n = np.linalg.norm(R[:, c])
+        if n > 1e-9:
+            R[:, c] /= n
+    sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    pitch = np.degrees(np.arctan2(R[2, 1], R[2, 2]))
+    yaw = np.degrees(np.arctan2(-R[2, 0], sy))
+    roll = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
+    return float(yaw), float(pitch), float(roll)
+
+
+def gaze_features(landmarks: np.ndarray, head_pose=None) -> list[float]:
     """Compact feature vector for *calibrated screen-gaze* regression.
 
-    Per-eye iris offset within the eye (normalised by eye width/height) captures eye
-    rotation; nose-tip position captures head translation. The calibration regression maps
-    these to screen coordinates for the user's specific camera/screen geometry.
-    Returns [r_ix, r_iy, l_ix, l_iy, nose_x, nose_y].
+    Combines BOTH parts of true gaze: eye-in-head rotation (averaged iris offset) AND head
+    pose — head rotation (yaw/pitch) + head translation (nose position). With both, the
+    regression can separate "eyes moved" from "head turned" (given calibration that samples
+    head movement). Returns [eye_x, eye_y, head_yaw, head_pitch, nose_x, nose_y].
     """
     lm = np.asarray(landmarks, dtype=float)
 
@@ -123,9 +139,11 @@ def gaze_features(landmarks: np.ndarray) -> list[float]:
         hy = abs(lm[bot, 1] - lm[top, 1]) + 1e-6
         return (lm[iris, 0] - cx) / wx, (lm[iris, 1] - cy) / hy
 
-    r_ix, r_iy = eye(133, 33, 159, 145, 468)   # image-left eye
-    l_ix, l_iy = eye(362, 263, 386, 374, 473)  # image-right eye
-    return [r_ix, r_iy, l_ix, l_iy, float(lm[1, 0]), float(lm[1, 1])]
+    r_ix, r_iy = eye(133, 33, 159, 145, 468)
+    l_ix, l_iy = eye(362, 263, 386, 374, 473)
+    eye_x, eye_y = (r_ix + l_ix) / 2.0, (r_iy + l_iy) / 2.0
+    yaw, pitch, _ = head_angles(head_pose)
+    return [eye_x, eye_y, yaw / 90.0, pitch / 90.0, float(lm[1, 0]), float(lm[1, 1])]
 
 
 class GazeFeatureExtractor(Extractor):
@@ -143,8 +161,8 @@ class GazeFeatureExtractor(Extractor):
         if self._last is not None and (ctx.ts - self._last) < self.period:
             return []
         self._last = ctx.ts
-        return [SignalRecord("gaze_raw", gaze_features(ctx.face.landmarks), 1.0, ctx.ts,
-                             gate="unknown", meta={})]
+        feats = gaze_features(ctx.face.landmarks, getattr(ctx.face, "head_pose", None))
+        return [SignalRecord("gaze_raw", feats, 1.0, ctx.ts, gate="unknown", meta={})]
 
 
 class IrisGazeExtractor(Extractor):
