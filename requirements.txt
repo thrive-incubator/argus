@@ -27,7 +27,8 @@ websockets==16.0           # web dashboard backend
 
 # --- perception models ---
 onnxruntime==1.27.0
-hsemotion-onnx==0.3.1      # affect: valence / arousal + emotion
+hsemotion-onnx==0.3.1      # affect: valence / arousal + emotion (fallback V/A head)
+emotiefflib==1.1.1         # affect: newer multi-task V/A head (mobilevit_va_mtl); review §8
 py-feat==2.0.2             # facial Action Units (pulls torch + xgboost; needs libomp)
 
 # torch (~2.12) and xgboost (~3.3) arrive transitively via py-feat; pip resolves them.

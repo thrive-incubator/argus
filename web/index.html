@@ -192,9 +192,19 @@ function setAU(n,v){const k=n.replace("au_","");let r=$("aurow-"+k);if(!r){r=doc
 
 // ---- gaze cursor (uses calibration saved by gaze.html) ----
 let gazeModel=null;try{gazeModel=JSON.parse(localStorage.getItem("argus_gaze_model"));}catch(e){}
+if(gazeModel&&gazeModel.length!==8){gazeModel=null;}  // discard pre-§7 (degree-2/6-feature) models — recalibrate
+let IPD0=0.06;try{const v=parseFloat(localStorage.getItem("argus_gaze_ipd0"));if(!isNaN(v))IPD0=v;}catch(e){}
 let cursorOn=false,gz={x:.5,y:.5,has:0};
-function poly(f){const z=[f[0],f[1],f[2],f[3],f[4]-0.5,f[5]-0.5],t=[1];for(let i=0;i<6;i++)t.push(z[i]);for(let i=0;i<6;i++)for(let j=i;j<6;j++)t.push(z[i]*z[j]);return t;}
-function predGaze(f){const p=poly(f);let sx=0,sy=0;for(let i=0;i<p.length;i++){sx+=p[i]*gazeModel[i][0];sy+=p[i]*gazeModel[i][1];}return[sx,sy];}
+// 7-feature degree-1 poly — must match the gaze.html calibrator (review §7).
+function poly(f){const z=[f[0],f[1],f[2],f[3],f[4]-0.5,f[5]-0.5,(f[6]||0)-IPD0];const t=[1];for(const v of z)t.push(v);return t;}
+function predGaze(f){const p=poly(f);let sx=0,sy=0;for(let i=0;i<p.length&&i<gazeModel.length;i++){sx+=p[i]*gazeModel[i][0];sy+=p[i]*gazeModel[i][1];}return[sx,sy];}
+// one-euro cursor smoothing (review §7)
+function _oe(){return{x:null,dx:0,t:null,mc:1.2,b:0.6,dc:1.0,
+  a:function(c,dt){const tau=1/(2*Math.PI*c);return 1/(1+tau/dt);},
+  f:function(v,t){if(this.x===null){this.x=v;this.t=t;return v;}const dt=Math.max(t-this.t,1e-3);this.t=t;
+    const dv=(v-this.x)/dt,ad=this.a(this.dc,dt);this.dx+=ad*(dv-this.dx);
+    const cut=this.mc+this.b*Math.abs(this.dx);this.x+=this.a(cut,dt)*(v-this.x);return this.x;}};}
+let oeGX=_oe(),oeGY=_oe();
 $("cursor-chip").onclick=()=>{ if(!gazeModel){alert("Calibrate first on the gaze page (click “calibrate →”).");return;}
   cursorOn=!cursorOn;$("cursor-chip").classList.toggle("on");$("gazecur").style.display=cursorOn?"block":"none";};
 $("posture-cal").onclick=()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:"set_posture_baseline"})); };
@@ -227,13 +237,21 @@ function connect(){
     case "posture":{const st=v.status,el=$("posture-status");el.textContent=st;
       el.style.color=st==="good"?"var(--good)":st==="poor"?"var(--reject)":st==="fair"?"var(--usable)":"var(--dim)";
       $("posture-issues").textContent=(v.issues&&v.issues.length)?v.issues.join(" · "):(st==="good"?"looking good ✓":st==="baseline set"?"baseline captured ✓":st);break;}
-    case "gaze_raw":if(cursorOn&&gazeModel&&Array.isArray(v)){const[sx,sy]=predGaze(v);const a=0.35;gz.x=gz.has?gz.x+a*(sx-gz.x):sx;gz.y=gz.has?gz.y+a*(sy-gz.y):sy;gz.has=1;}break;
+    case "gaze_raw":if(cursorOn&&gazeModel&&Array.isArray(v)){const[sx,sy]=predGaze(v);const now=performance.now()/1000;gz.x=oeGX.f(sx,now);gz.y=oeGY.f(sy,now);gz.has=1;}break;
     case "au_affect":if(m.meta){$("au-emotion").textContent=m.meta.emotion;
       $("au-val").textContent=(m.meta.valence>=0?"+":"")+m.meta.valence;$("au-aro").textContent=(m.meta.arousal>=0?"+":"")+m.meta.arousal;}break;
+    case "ceilings":renderCeilings(v);break;
+    case "fairness":if(v){const fn=$("fair-note");if(fn)fn.textContent="skin tone "+v.label+" (Fitzpatrick "+v.fitzpatrick+") · "+v.note;}break;
     default:if(m.name.startsWith("au_"))setAU(m.name,v);
   }};
 }
+// Honest accuracy ceilings (review §9) — attach as hover tooltips on the metric values.
+const CEIL_EL={hr:"hr",hrv:"hrv",resp:"resp",blink:"blink",fidget:"fidget",posture:"posture",gaze:"gaze",affect:"emotion"};
+function renderCeilings(c){ if(!c)return; for(const k in CEIL_EL){const el=$(CEIL_EL[k]),d=c[k]; if(el&&d) el.title=`realistic accuracy — best ${d.best}; typical ${d.typical}. ${d.note}`;}
+  const cn=$("ceil-note"); if(cn) cn.textContent="ⓘ hover any value for its realistic accuracy ceiling"; }
 connect();
 </script>
+<div id="fair-note" style="position:fixed;bottom:8px;left:16px;max-width:60vw;font-size:11px;color:#7c8896;z-index:9"></div>
+<div id="ceil-note" style="position:fixed;bottom:8px;right:16px;font-size:11px;color:#5a6675;z-index:9"></div>
 </body>
 </html>

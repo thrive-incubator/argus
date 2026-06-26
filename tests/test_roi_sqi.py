@@ -3,9 +3,16 @@
 import numpy as np
 import pytest
 
-from argus.dsp.roi import active_patch_count, roi_mean_rgb, sample_patch_mean
+from argus.dsp.roi import (
+    STANDARD_PATCHES,
+    active_patch_count,
+    roi_mean_rgb,
+    roi_patch_stack,
+    sample_patch_mean,
+)
 from argus.dsp.sqi import (
     beat_template_correlations,
+    fuse_patches_by_snr,
     orphanidou_bsqi,
     perfusion_index,
     skewness_sqi,
@@ -14,31 +21,79 @@ from argus.dsp.sqi import (
 
 def _landmarks():
     lm = np.zeros((478, 3))
+    lm[9] = [0.5, 0.22, 0]  # glabella (between the eyebrows)
     lm[151] = [0.5, 0.30, 0]  # forehead
     lm[50] = [0.40, 0.55, 0]  # left cheek
     lm[280] = [0.60, 0.55, 0]  # right cheek
     return lm
 
 
-# D1.AC1 — multi-patch mean over forehead + cheeks.
+# D1.AC1 — multi-patch mean over glabella + forehead + cheeks.
 def test_roi_multipatch_mean():
     frame = np.full((200, 200, 3), [100, 150, 50], np.uint8)
     mean = roi_mean_rgb(frame, _landmarks())
     assert mean == pytest.approx([100, 150, 50])
 
 
-# D1.AC2 — yaw beyond cutoff drops a cheek patch; ROI still valid.
+# D1.AC2 — yaw beyond cutoff drops a cheek patch; glabella+forehead+one cheek remain.
 def test_roi_yaw_drops_cheek():
-    assert active_patch_count(0.0) == 3
-    assert active_patch_count(40.0, yaw_cutoff=25.0) == 2  # right-turned drops left cheek
-    assert active_patch_count(-40.0, yaw_cutoff=25.0) == 2
+    assert active_patch_count(0.0) == 4  # glabella + forehead + both cheeks
+    assert active_patch_count(40.0, yaw_cutoff=25.0) == 3  # right-turned drops left cheek
+    assert active_patch_count(-40.0, yaw_cutoff=25.0) == 3
     frame = np.full((200, 200, 3), [10, 20, 30], np.uint8)
     mean = roi_mean_rgb(frame, _landmarks(), yaw_deg=40.0)
     assert mean == pytest.approx([10, 20, 30])  # still valid
 
 
-def test_roi_facial_hair_forehead_only():
-    assert active_patch_count(0.0, facial_hair=True) == 1
+def test_roi_facial_hair_upper_face_only():
+    # facial hair drops both cheeks, leaving glabella + forehead.
+    assert active_patch_count(0.0, facial_hair=True) == 2
+
+
+def test_roi_patch_stack_shape_and_order():
+    frame = np.full((120, 120, 3), [30, 40, 50], np.uint8)
+    stack = roi_patch_stack(frame, _landmarks())
+    assert stack.shape == (len(STANDARD_PATCHES), 3)
+    assert stack == pytest.approx(np.full((4, 3), [30, 40, 50]))
+
+
+# Review §1 — per-patch SNR fusion down-weights a corrupted patch and recovers HR.
+def test_fuse_patches_by_snr_downweights_noise():
+    fps, hr = 30.0, 72.0
+    n = int(fps * 12)
+    t = np.arange(n) / fps
+    pulse = np.sin(2 * np.pi * (hr / 60.0) * t)
+    base = np.array([0.8, 0.5, 0.4])
+    amp = np.array([0.01, 0.03, 0.005])
+    rng = np.random.default_rng(0)
+    clean = base + amp * pulse[:, None] + 0.002 * rng.standard_normal((n, 3))
+    noisy = base + 0.20 * rng.standard_normal((n, 3))  # no pulse, heavy noise
+    bvp, info = fuse_patches_by_snr({"glabella": clean, "left_cheek": noisy}, fps)
+    assert info["fallback"] is False
+    # the clean patch must carry the majority of the fused weight
+    assert info["weights"]["glabella"] > info["weights"]["left_cheek"]
+    from argus.dsp.rppg import hr_from_bvp
+    assert abs(hr_from_bvp(bvp, fps) - hr) <= 5.0
+
+
+def test_fuse_patches_fallback_when_no_patch_scores():
+    # too-short series → POS raises for every patch → graceful mean fallback, no crash.
+    fps = 30.0
+    tiny = np.ones((3, 3))
+    bvp, info = fuse_patches_by_snr({"a": tiny, "b": tiny}, fps)
+    assert info["fallback"] is True
+    assert len(bvp) == tiny.shape[0]
+
+
+def test_fuse_patches_single_patch_is_finite():
+    fps, hr = 30.0, 66.0
+    n = int(fps * 12)
+    t = np.arange(n) / fps
+    rgb = np.array([0.8, 0.5, 0.4]) + np.array([0.01, 0.03, 0.005]) * np.sin(
+        2 * np.pi * (hr / 60.0) * t)[:, None]
+    bvp, info = fuse_patches_by_snr({"glabella": rgb}, fps)
+    assert info["weights"]["glabella"] == pytest.approx(1.0)
+    assert np.isfinite(bvp).all()
 
 
 # D1.AC3 — landmark jitter doesn't spike the ROI mean (patch averaging) on a flat frame.

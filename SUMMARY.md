@@ -96,3 +96,34 @@ are implemented as the **checks/metrics** the harness computes (EC13/CTA pass-fa
 bar, CCC), exercised on synthetic and replay data. The bars themselves are only *meaningful*
 against a live subject + Polar H10 on the hardware-in-the-loop runner; the code that computes and
 gates on them is complete and tested here.
+
+---
+
+## Algorithm-review improvements (2026-06-25)
+
+Implemented **every** recommendation in `docs/06_ALGORITHM_REVIEW.md` (the SOTA review of all
+signal algorithms), with tests. **Suite: 220 passed, 0 failed.**
+
+- **HR/rPPG**: added the glabella patch and per-patch **SNR-weighted fusion** with occlusion
+  fallback (`dsp/roi.py`, `dsp/sqi.fuse_patches_by_snr`, `RppgExtractor(per_patch=True)`).
+- **HRV**: **parabolic sub-sample peak interpolation** + Lipponen–Tarvainen IBI correction
+  (`correct_ibis`); per-window **NSQI + SNR + skewness** gate (`window_sqi_gate`).
+- **Respiration**: chest-ROI **Farnebäck optical-flow** estimator chosen as primary by SQI,
+  shoulder-motion + rPPG-RR retained as cross-checks (`ChestFlowRespiration`).
+- **Blink/PERCLOS**: **graded eye-openness** (EAR ⊕ eyeBlink blendshape) + true **P80** over a
+  rolling window with <400 ms blink exclusion (`PerclosP80`).
+- **Fidget**: **MEA frame-differencing** energy + **SPARC/LDLJ** smoothness (`dsp/motion.py`).
+- **Posture**: median-window baseline, **temporal hysteresis** (`PostureDebouncer`), head-roll,
+  forward-head **AND-gate**, landmark-visibility confidence gate.
+- **Gaze**: 7th **inter-ocular distance** feature, **degree-1 ridge** default, **one-euro**
+  cursor, **cm/° held-out-CV error**, click-anchored **drift recalibration** (`web/gaze.html`,
+  `web/index.html`, `perception/gaze.PolynomialRidge`).
+- **Affect**: configurable newer multi-task V/A head (**EmotiEffLib `mobilevit_va_mtl`**) with
+  graceful HSEmotion fallback (`build_affect_estimator`); real inference validated.
+- **Cross-cutting**: **skin-tone fairness** (ITA°→Fitzpatrick + stratified error), a **shared
+  per-frame motion-quality index**, and **honest accuracy ceilings** per signal — all surfaced
+  live in the web dashboard.
+
+New deps: `emotiefflib==1.1.1` (added to `requirements.txt`). New tests:
+`test_motion_metrics.py`, `test_quality_crosscut.py`, plus additions across
+`test_roi_sqi/test_hrv/test_respiration_blink/test_posture/test_perception`.

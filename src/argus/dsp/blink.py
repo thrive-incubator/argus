@@ -1,12 +1,18 @@
-"""Blink detection (Eye Aspect Ratio) and PERCLOS (ADR-08, TECH §6.4).
+"""Blink detection (Eye Aspect Ratio) and PERCLOS (ADR-08, TECH §6.4; algorithm-review §4).
 
 EAR (Soukupová & Čech 2016) with a **per-session adaptive threshold** auto-calibrated
 from the open-eye baseline; a blink is EAR below threshold for >= N consecutive frames.
-PERCLOS (P80) = fraction of a window with the eye >= 80% closed.
+
+PERCLOS (P80) = fraction of a window with the eye >= 80% closed. Review §4 notes that a
+binary ``EAR < thr`` flag cannot compute a true P80 — it needs a **graded eye-openness**
+signal. We therefore (a) fuse the MediaPipe ``eyeBlink`` blendshape with normalised EAR into
+a 0..1 openness, and (b) compute P80 over a rolling window with short (<400 ms) blink events
+excluded so genuine eyelid-closure (drowsiness) is separated from ordinary blinks.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -114,3 +120,71 @@ def perclos(ear_series, baseline: float, closed_frac: float = 0.8) -> float:
         return 0.0
     thr = (1.0 - closed_frac) * baseline
     return float(np.mean(ear <= thr))
+
+
+def eye_openness(ear: float, baseline: float, blink_score: float | None = None) -> float:
+    """Graded 0..1 eye-openness (review §4): 1 = fully open, 0 = fully closed.
+
+    Normalises EAR by the open-eye baseline, and — when a MediaPipe ``eyeBlink`` blendshape
+    score (0 = open, 1 = closed) is available — fuses it in (mean of the two cues). The
+    blendshape de-risks the EAR failure mode of conflating squint/downward-gaze with closure.
+    """
+    if baseline <= 1e-9:
+        ear_open = 0.0
+    else:
+        ear_open = float(np.clip(ear / baseline, 0.0, 1.0))
+    if blink_score is None:
+        return ear_open
+    bs_open = float(np.clip(1.0 - blink_score, 0.0, 1.0))
+    return float((ear_open + bs_open) / 2.0)
+
+
+@dataclass
+class PerclosP80:
+    """Streaming P80 PERCLOS over a rolling time window with blink-event exclusion.
+
+    Feed graded openness (0..1) per frame; the metric is the fraction of *valid* (non-blink)
+    frames with openness <= ``1 - closed_frac`` (i.e. eyes ≥80% closed). Closure runs shorter
+    than ``blink_max_s`` (default 400 ms) are treated as ordinary blinks and excluded, so the
+    P80 reflects sustained eyelid droop (drowsiness), not blink rate.
+    """
+
+    fps: float = 30.0
+    window_s: float = 60.0
+    closed_frac: float = 0.8
+    blink_max_s: float = 0.4
+    _ts: deque = field(default_factory=deque)
+    _open: deque = field(default_factory=deque)
+
+    @property
+    def _closed_thr(self) -> float:
+        return 1.0 - self.closed_frac
+
+    def update(self, ts: float, openness: float) -> None:
+        self._ts.append(float(ts))
+        self._open.append(float(openness))
+        cutoff = ts - self.window_s
+        while self._ts and self._ts[0] < cutoff:
+            self._ts.popleft()
+            self._open.popleft()
+
+    def value(self) -> float:
+        n = len(self._open)
+        if n == 0:
+            return 0.0
+        closed = np.asarray(self._open, dtype=float) <= self._closed_thr
+        valid = closed.copy()
+        # exclude short closure runs (blinks) from the "closed" count
+        max_frames = max(int(self.blink_max_s * self.fps), 1)
+        i = 0
+        while i < n:
+            if closed[i]:
+                j = i
+                while j < n and closed[j]:
+                    j += 1
+                if (j - i) <= max_frames:  # a blink, not sustained droop
+                    valid[i:j] = False
+                i = j
+            else:
+                i += 1
+        return float(valid.sum() / n)

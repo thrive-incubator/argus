@@ -132,9 +132,11 @@ def gaze_features(landmarks: np.ndarray, head_pose=None) -> list[float]:
     """Compact feature vector for *calibrated screen-gaze* regression.
 
     Combines BOTH parts of true gaze: eye-in-head rotation (averaged iris offset) AND head
-    pose — head rotation (yaw/pitch) + head translation (nose position). With both, the
-    regression can separate "eyes moved" from "head turned" (given calibration that samples
-    head movement). Returns [eye_x, eye_y, head_yaw, head_pitch, nose_x, nose_y].
+    pose — head rotation (yaw/pitch) + head translation (nose position) — PLUS an
+    inter-ocular-distance (iris-to-iris) scale feature that encodes distance-to-screen
+    (review §7: the #2 failure mode is distance change silently breaking the mapping).
+
+    Returns ``[eye_x, eye_y, head_yaw, head_pitch, nose_x, nose_y, iod]``.
     """
     lm = np.asarray(landmarks, dtype=float)
 
@@ -149,7 +151,83 @@ def gaze_features(landmarks: np.ndarray, head_pose=None) -> list[float]:
     l_ix, l_iy = eye(362, 263, 386, 374, 473)
     eye_x, eye_y = (r_ix + l_ix) / 2.0, (r_iy + l_iy) / 2.0
     yaw, pitch, _ = head_angles(head_pose)
-    return [eye_x, eye_y, yaw / 90.0, pitch / 90.0, float(lm[1, 0]), float(lm[1, 1])]
+    iod = float(np.hypot(lm[473, 0] - lm[468, 0], lm[473, 1] - lm[468, 1]))  # distance/scale
+    return [eye_x, eye_y, yaw / 90.0, pitch / 90.0, float(lm[1, 0]), float(lm[1, 1]), iod]
+
+
+# Number of features emitted by gaze_features (kept in sync with the browser calibrator).
+N_GAZE_FEATURES = 7
+
+
+class PolynomialRidge:
+    """Polynomial-ridge screen-gaze regressor — the Python parity of the browser calibrator.
+
+    Review §7: ridge-on-polynomial-features is the empirically best regressor at a 9+ point
+    budget, but a full degree-2 over 7 features is **underdetermined** from ~13–18 points, so
+    ``degree=1`` is the most defensible default and ``alpha`` (ridge) is load-bearing.
+    """
+
+    def __init__(self, degree: int = 1, alpha: float = 1e-2):
+        if degree not in (1, 2):
+            raise ValueError("degree must be 1 or 2")
+        self.degree = degree
+        self.alpha = alpha
+        self._W: np.ndarray | None = None
+
+    def _design(self, X: np.ndarray) -> np.ndarray:
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        cols = [np.ones((len(X), 1)), X]
+        if self.degree == 2:
+            cols.append(X ** 2)
+            # pairwise cross terms
+            n = X.shape[1]
+            cross = [X[:, i] * X[:, j] for i in range(n) for j in range(i + 1, n)]
+            if cross:
+                cols.append(np.column_stack(cross))
+        return np.hstack(cols)
+
+    def fit(self, X: np.ndarray, Y: np.ndarray) -> "PolynomialRidge":
+        P = self._design(X)
+        Y = np.atleast_2d(np.asarray(Y, dtype=float))
+        if Y.shape[0] != P.shape[0]:
+            Y = Y.T
+        reg = self.alpha * np.eye(P.shape[1])
+        reg[0, 0] = 0.0  # don't penalise the bias term
+        self._W = np.linalg.solve(P.T @ P + reg, P.T @ Y)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if self._W is None:
+            raise RuntimeError("fit() before predict()")
+        out = self._design(X) @ self._W
+        return out[0] if out.shape[0] == 1 else out
+
+    def loo_cv_rmse(self, X: np.ndarray, Y: np.ndarray) -> float:
+        """Leave-one-point-out CV RMSE (review §7: report held-out, not training, error)."""
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        Y = np.atleast_2d(np.asarray(Y, dtype=float))
+        if Y.shape[0] != X.shape[0]:
+            Y = Y.T
+        n = len(X)
+        if n < 3:
+            return float("nan")
+        errs = []
+        idx = np.arange(n)
+        for k in range(n):
+            mask = idx != k
+            model = PolynomialRidge(self.degree, self.alpha).fit(X[mask], Y[mask])
+            pred = np.atleast_1d(model.predict(X[k:k + 1]))
+            errs.append(float(np.sum((pred - Y[k]) ** 2)))
+        return float(np.sqrt(np.mean(errs)))
+
+
+def angle_to_screen_cm(angle_deg: float, viewing_distance_cm: float) -> float:
+    """Convert a gaze angular error (deg) to an on-screen distance (cm) at a viewing distance.
+
+    Review §7: report error in cm/degrees (benchmarkable), not "% of screen". At ~57 cm,
+    1° ≈ 1 cm.
+    """
+    return float(viewing_distance_cm * np.tan(np.radians(angle_deg)))
 
 
 class GazeFeatureExtractor(Extractor):

@@ -7,10 +7,13 @@ from argus.dsp import hrv as hrv_mod
 from argus.dsp.hrv import (
     EXCLUDED_HRV_METRICS,
     compute_hrv,
+    correct_ibis,
+    detect_peaks,
     rmssd,
     sdnn,
     upsample_bvp,
 )
+from argus.dsp.sqi import nsqi, window_sqi_gate
 
 
 # R10
@@ -70,3 +73,60 @@ def test_compute_hrv_returns_none_when_too_few_good():
     nn = np.array([800.0, 810.0, 795.0, 805.0, 800.0])
     flags = np.array([True, False, False, False, False])  # 20% good
     assert compute_hrv(nn, flags, good_fraction_min=0.80) is None
+
+
+# Review §2 — parabolic interpolation recovers a sub-sample peak the integer grid misses.
+def test_parabolic_peak_subsample_timing():
+    fs = 50.0
+    # a peak whose true vertex sits between samples (asymmetric neighbours)
+    y = np.array([0.0, 0.1, 0.4, 0.9, 0.85, 0.3, 0.0, 0.0])
+    coarse = detect_peaks(y, fs, interpolate=False)
+    fine = detect_peaks(y, fs, interpolate=True)
+    assert coarse.size == 1 and fine.size == 1
+    # integer grid puts the peak at index 3 → 0.06 s; parabola shifts it toward the heavier side
+    assert fine[0] != coarse[0]
+    assert abs(fine[0] - coarse[0]) <= 0.5 / fs + 1e-9
+
+
+def test_correct_ibis_flags_ectopic_beat():
+    fs = 256.0
+    # regular ~1 s beats with one early (ectopic) beat injected
+    peaks = np.array([0.0, 1.0, 2.0, 2.4, 3.4, 4.4])
+    _, good = correct_ibis(peaks, fs)
+    assert good.shape[0] == peaks.size - 1
+    assert good.sum() < good.shape[0]  # at least one interval rejected
+
+
+def test_nsqi_low_for_clean_high_for_noise():
+    fps, hr = 30.0, 72.0
+    t = np.arange(int(fps * 12)) / fps
+    clean = np.sin(2 * np.pi * (hr / 60.0) * t)
+    rng = np.random.default_rng(0)
+    noisy = rng.standard_normal(t.size)
+    assert nsqi(clean, fps, hr) < 0.293       # passes the rPPG accept threshold
+    assert nsqi(noisy, fps, hr) > nsqi(clean, fps, hr)
+
+
+def test_window_sqi_gate_accepts_clean_rejects_noise():
+    fps, hr = 30.0, 72.0
+    t = np.arange(int(fps * 12)) / fps
+    clean = np.sin(2 * np.pi * (hr / 60.0) * t)
+    rng = np.random.default_rng(1)
+    noisy = rng.standard_normal(t.size)
+    assert window_sqi_gate(clean, fps, hr)["accept"] is True
+    assert window_sqi_gate(noisy, fps, hr)["accept"] is False
+
+
+# Regression: a usable-but-noisy webcam rPPG window (SNR ~4 dB) must NOT be suppressed by the
+# HRV extractor's advisory gate (it scores above the 0.05 catastrophic floor) — the strict
+# accept/NSQI thresholds previously blanked HRV entirely on real signals.
+def test_window_sqi_usable_signal_above_suppress_floor():
+    from argus.dsp.rppg import bandpass
+    fps, hr = 30.0, 72.0
+    t = np.arange(int(fps * 20)) / fps
+    rng = np.random.default_rng(7)
+    bvp = bandpass(np.sin(2 * np.pi * (hr / 60.0) * t) + 1.0 * rng.standard_normal(t.size), fps)
+    g = window_sqi_gate(bvp, fps, hr)
+    assert g["score"] > 0.05            # above the catastrophic floor → HRV still emits (advisory)
+    # and pure noise stays below it → correctly suppressed
+    assert window_sqi_gate(rng.standard_normal(t.size), fps, hr)["score"] < 0.05

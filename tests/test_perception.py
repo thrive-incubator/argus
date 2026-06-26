@@ -150,16 +150,101 @@ def test_gaze_features():
     lm[362]=[.6,.5,0]; lm[263]=[.8,.5,0]; lm[386]=[.7,.45,0]; lm[374]=[.7,.55,0]; lm[473]=[.7,.5,0]
     lm[1]=[.5,.6,0]
     f = gaze_features(lm)
-    assert len(f) == 6
+    assert len(f) == 7
     assert abs(f[0]) < 0.1                         # centered iris -> ~0 eye offset
     assert abs(f[2]) < 0.1 and abs(f[3]) < 0.1    # no head_pose -> 0 head yaw/pitch
     assert f[4] == 0.5 and f[5] == 0.6           # nose position carried through
+    assert f[6] == pytest.approx(0.4)            # inter-pupillary distance (0.7-0.3)
     lm[468] = [.35, .5, 0]                         # shift right-eye iris
     assert gaze_features(lm)[0] > f[0]
+    assert gaze_features(lm)[6] == pytest.approx(0.35)  # IPD shrinks as iris moves inward
     th = np.radians(30)                            # head rotation enters the features
     Ry = np.array([[np.cos(th), 0, np.sin(th)], [0, 1, 0], [-np.sin(th), 0, np.cos(th)]])
     M = np.eye(4); M[:3, :3] = Ry
     assert abs(gaze_features(lm, M)[2]) > 0.2      # head yaw now non-zero
+
+
+def test_polynomial_ridge_fits_and_loo_cv():
+    from argus.perception.gaze import PolynomialRidge
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, (24, 7))
+    # a smooth linear-ish screen mapping + small noise
+    true_w = rng.uniform(-1, 1, (7, 2))
+    Y = X @ true_w + np.array([0.3, -0.2]) + rng.normal(0, 0.01, (24, 2))
+    model = PolynomialRidge(degree=1, alpha=1e-2).fit(X, Y)
+    pred = model.predict(X[:1])
+    assert pred.shape == (2,)
+    assert model.loo_cv_rmse(X, Y) < 0.1          # generalises on held-out points
+
+
+def test_angle_to_screen_cm():
+    from argus.perception.gaze import angle_to_screen_cm
+    # ~1° ≈ 1 cm at 57 cm
+    assert angle_to_screen_cm(1.0, 57.0) == pytest.approx(1.0, abs=0.05)
+    assert angle_to_screen_cm(0.0, 60.0) == 0.0
+
+
+# Affect aligned face crop — square, eye-leveled crop the model expects (fixes "surprise" bias).
+def test_aligned_face_crop_square_and_fallback():
+    from argus.perception.affect import aligned_face_crop_bgr
+
+    class F:
+        pass
+
+    frame = np.zeros((480, 640, 3), np.uint8)
+    lm = np.zeros((478, 3))
+    lm[468] = [0.45, 0.40, 0]   # right iris centre
+    lm[473] = [0.55, 0.40, 0]   # left iris centre (eyes level, ~64 px apart)
+    f = F(); f.landmarks = lm
+    crop = aligned_face_crop_bgr(FrameContext(frame=frame, ts=1.0, frame_id=0, face=f), size=224)
+    assert crop.shape == (224, 224, 3)            # square, fixed size — no aspect stretch
+
+    # a rolled (tilted) eye line still yields a square crop (rotation handled, no crash)
+    lm2 = lm.copy(); lm2[468] = [0.45, 0.36, 0]; lm2[473] = [0.55, 0.44, 0]
+    f2 = F(); f2.landmarks = lm2
+    crop2 = aligned_face_crop_bgr(FrameContext(frame=frame, ts=1.0, frame_id=0, face=f2))
+    assert crop2.shape == (224, 224, 3)
+
+    # no iris landmarks → graceful fallback to the bbox crop (non-empty array)
+    f3 = F(); f3.landmarks = np.zeros((10, 3))
+    crop3 = aligned_face_crop_bgr(FrameContext(frame=frame, ts=1.0, frame_id=0, face=f3))
+    assert crop3 is not None and crop3.size > 0
+
+
+# Review §8 — configurable V/A head: parse native V/A, and graceful fallback.
+def test_emotiefflib_adapter_parses_va_from_scores():
+    from argus.perception.affect import EmotiEffLibAffectEstimator
+
+    class FakeRec:  # mimics EmotiEffLibRecognizer.predict_emotions for an *_va_mtl model
+        def predict_emotions(self, img, logits=False):
+            # [8 emotion probs..., valence, arousal]
+            scores = np.array([[0.05, 0.6, 0.05, 0.05, 0.1, 0.05, 0.05, 0.05, 0.42, 0.31]])
+            return (["happiness"], scores)
+
+    est = EmotiEffLibAffectEstimator(recognizer=FakeRec())
+    out = est.estimate(np.zeros((8, 8, 3), np.uint8))
+    assert est.backend == "emotiefflib"
+    assert out.emotion == "happiness"
+    assert out.valence == pytest.approx(0.42) and out.arousal == pytest.approx(0.31)
+    assert out.confidence == pytest.approx(0.6)
+
+
+def test_build_affect_estimator_fallback_to_hsemotion(monkeypatch):
+    import argus.perception.affect as affect
+
+    class StubHS:
+        backend = "hsemotion"
+        def __init__(self, model_name="enet_b0_8_va_mtl"):
+            self.model_name = model_name
+
+    # EmotiEffLib unavailable → build must fall back to (stubbed) HSEmotion, no weights loaded.
+    def boom(*a, **k):
+        raise RuntimeError("emotiefflib unavailable")
+
+    monkeypatch.setattr(affect, "EmotiEffLibAffectEstimator", boom)
+    monkeypatch.setattr(affect, "HSEmotionEstimator", StubHS)
+    est = affect.build_affect_estimator(prefer="emotiefflib")
+    assert est.backend == "hsemotion" and est.model_name == "enet_b0_8_va_mtl"
 
 
 # Affect derived from FACS Action Units (EMFACS) — the robust, interpretable path.

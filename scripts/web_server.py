@@ -140,10 +140,11 @@ def add_fast_perception(pipe, synthetic):
         pipe.add_extractor(AffectExtractor(FakeEmotionEstimator(
             AffectEstimate("happiness", 0.6, 0.3, 0.9)), live_hz=10.0))
         return
-    try:  # main Affect panel: HSEmotion native valence/arousal (research-paper default)
-        from argus.perception.affect import AffectExtractor, HSEmotionEstimator
-        pipe.add_extractor(AffectExtractor(HSEmotionEstimator(), live_hz=12.0))
-        print("  affect: ON (HSEmotion native V/A)")
+    try:  # main Affect panel: best-available native V/A head, graceful fallback (review §8)
+        from argus.perception.affect import AffectExtractor, build_affect_estimator
+        est = build_affect_estimator()  # EmotiEffLib mobilevit_va_mtl → HSEmotion fallback
+        pipe.add_extractor(AffectExtractor(est, live_hz=12.0))
+        print(f"  affect: ON ({est.backend} native V/A, {getattr(est,'model_name','?')})")
     except Exception as e:
         print(f"  affect: off ({e})")
     try:
@@ -205,7 +206,9 @@ class AuWorker(threading.Thread):
 
 
 def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.Event, state: dict):
-    from argus.perception.posture import PostureMonitor, posture_features
+    import numpy as np
+
+    from argus.perception.posture import PostureDebouncer, PostureMonitor, posture_features
     from argus.viz.overlay import annotations, encode_jpeg_b64
 
     pipe, cam, fps = build_pipeline(synthetic, None)
@@ -213,9 +216,17 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
     latest = {"frame": None}
     AuWorker(latest, broadcaster, stop, synthetic).start()
     posture = PostureMonitor()
+    posture_debounce = PostureDebouncer(hold_s=3.0)  # review §6: stop per-frame flicker
     posture_path = ROOT / "posture_baseline.json"
     if posture.load_baseline(posture_path):  # reuse a previously saved 'good posture'
         print("  posture: restored saved baseline")
+    # review §9 cross-cutting: shared motion-quality index + honest ceilings + skin-tone fairness
+    from argus.dsp.roi import roi_mean_rgb
+    from argus.quality.ceilings import SIGNAL_CEILINGS
+    from argus.quality.fairness import estimate_skin_tone
+    from argus.quality.motion_index import FrameMotionIndex
+    motion_idx = FrameMotionIndex()
+    skin_done = False
     m: dict = {}  # latest metric values (drawn as a togglable HUD layer in the browser)
     cam_every = 3  # ~fps/3 (~10 Hz) raw frame + vector annotations
     i = 0
@@ -224,6 +235,12 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
         if not ok:
             break
         latest["frame"] = frame
+        # shared per-frame motion index → quality all signals can gate on (review §9)
+        try:
+            motion_idx.update(frame)
+            m["motion_quality"] = round(motion_idx.quality, 2)
+        except Exception:
+            pass
         for r in pipe.process_frame(frame, local_clock(), i):
             broadcaster.publish_threadsafe(WebSocketBridge.to_json(r))
             if r.name == "hr":
@@ -246,19 +263,49 @@ def pipeline_thread(synthetic: bool, broadcaster: Broadcaster, stop: threading.E
             flm = getattr(pipe.last_ctx.face, "landmarks", None) if pipe.last_ctx.face else None
             pim = getattr(pipe.last_ctx.pose, "image_landmarks", None) if pipe.last_ctx.pose else None
             feats = posture_features(flm, pim)
-        if state.get("set_baseline"):
+        if state.get("set_baseline"):  # request → start a median-window capture (review §6)
             state["set_baseline"] = False
-            ok_base = posture.set_baseline(feats)
-            if ok_base:
-                posture.save_baseline(posture_path)  # persist for future sessions
+            posture.begin_baseline(n_frames=20)
             broadcaster.publish_threadsafe(json.dumps({"name": "posture", "value": {
-                "status": "baseline set" if ok_base else "no face/pose — sit in frame first",
-                "issues": []}}))
-        if posture.has_baseline and feats is not None:
-            assessment = posture.assess(feats)
+                "status": "capturing baseline — sit upright…", "issues": []}}))
+        if posture.capturing:
+            if posture.feed_baseline(feats):  # median over the window → baseline set
+                posture.save_baseline(posture_path)  # persist for future sessions
+                broadcaster.publish_threadsafe(json.dumps({"name": "posture", "value": {
+                    "status": "baseline set", "issues": []}}))
+        elif posture.has_baseline and feats is not None:
+            visibility = None
+            if pipe.last_ctx is not None and pipe.last_ctx.pose is not None:
+                vis = getattr(pipe.last_ctx.pose, "visibility", None)
+                if vis is not None:
+                    visibility = float(np.asarray(vis)[[11, 12]].mean())
+            assessment = posture.assess(feats, visibility=visibility)
+            assessment["status"] = posture_debounce.update(assessment["status"], i / max(fps, 1e-6))
             m["posture_status"] = assessment["status"]
             if i % cam_every == 0:
                 broadcaster.publish_threadsafe(json.dumps({"name": "posture", "value": assessment}))
+
+        # honest accuracy ceilings — rebroadcast periodically so late-joining clients get them
+        if i % int(max(fps, 1) * 5) == 0:
+            broadcaster.publish_threadsafe(json.dumps({"name": "ceilings", "value": SIGNAL_CEILINGS}))
+        # skin-tone fairness: estimate once from the forehead ROI and surface the caveat (review §9)
+        if not skin_done and pipe.last_ctx is not None and getattr(pipe.last_ctx, "face", None):
+            flm2 = getattr(pipe.last_ctx.face, "landmarks", None)
+            if flm2 is not None:
+                try:
+                    bgr = roi_mean_rgb(frame, flm2)
+                    tone = estimate_skin_tone((float(bgr[2]), float(bgr[1]), float(bgr[0])))  # BGR→RGB
+                    broadcaster.publish_threadsafe(json.dumps({"name": "fairness", "value": {
+                        "fitzpatrick": tone.fitzpatrick, "ita_deg": round(tone.ita_deg, 1),
+                        "label": tone.label,
+                        "note": ("rPPG HR/HRV error can be ~2–3× larger for darker skin "
+                                 "(Fitzpatrick V–VI) — read the cardiac bars accordingly."
+                                 if tone.fitzpatrick >= 5 else
+                                 "rPPG cardiac error is near best-case for this skin tone; "
+                                 "it will not generalise to darker skin.")}}))
+                    skin_done = True
+                except Exception:
+                    pass
 
         if i % cam_every == 0 and pipe.last_ctx is not None:
             b64 = encode_jpeg_b64(frame)  # RAW (mirrored) frame; overlays drawn in JS

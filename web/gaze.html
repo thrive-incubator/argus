@@ -24,10 +24,15 @@
   <button id="cal">Start calibration</button>
   <button id="recal" style="display:none">Recalibrate</button>
   <div id="msg">Press <b>F</b> for fullscreen. Sit ~50–60 cm away. Look naturally at each dot —
-    the calibration now learns your <b>head pose + eye position together</b>, so small head
+    the calibration now learns your <b>head pose + eye position + distance together</b>, so small head
     movement is fine. Move your head a little between dots so it samples more positions.
     (Big novel head turns still extrapolate poorly — recalibrate if it drifts.)</div>
+  <div id="geom" style="margin-top:8px;color:#7c8896;font-size:12px;cursor:auto">
+    screen width <input id="scrW" type="number" value="30" min="10" max="120" style="width:54px">cm ·
+    viewing distance <input id="dist" type="number" value="57" min="20" max="120" style="width:54px">cm
+  </div>
   <div id="acc"></div>
+  <div id="hint" style="margin-top:6px;color:#5a6675;font-size:11px">While tracking, <b>click</b> where you're actually looking to add a drift-correction anchor.</div>
 </div>
 <div id="conn"><b id="cdot">●</b> <span id="cstat">connecting…</span></div>
 
@@ -38,26 +43,35 @@ resize(); addEventListener("resize",resize);
 const W=()=>cv.width, H=()=>cv.height;
 
 // ---- state ----
-let feat=null;                 // latest gaze feature vector from the server
+let feat=null;                 // latest gaze feature vector from the server (7-dim)
 let model=null;                // fitted regression weights
 let gaze={x:0.5,y:0.5,has:false};
 let mode="idle";               // idle | calibrating | tracking
 const samples=[];              // [{f:[...], t:[px,py]}]
+
+// Review §7: degree-1 + ridge is the defensible default — a full degree-2 over 7 features
+// (36 terms) is underdetermined from ~13–18 points. λ ridge is load-bearing either way.
+const DEGREE=1, LAMBDA=1e-2;
+let IPD0=0.06;                 // baseline inter-pupillary distance (distance/scale), set at calibration
 
 // 13 calibration targets (fractional screen coords)
 const PTS=[[.5,.5],[.08,.08],[.5,.08],[.92,.08],[.08,.5],[.92,.5],
            [.08,.92],[.5,.92],[.92,.92],[.29,.29],[.71,.29],[.29,.71],[.71,.71]];
 
 // ---- tiny linear algebra (ridge regression) ----
-function poly(f){const x=[f[0],f[1],f[2],f[3],f[4]-0.5,f[5]-0.5];const t=[1];
-  for(let i=0;i<6;i++)t.push(x[i]); for(let i=0;i<6;i++)for(let j=i;j<6;j++)t.push(x[i]*x[j]); return t;}
+// feature vector: [eye_x, eye_y, head_yaw, head_pitch, nose_x, nose_y, ipd]
+function center(f){return [f[0],f[1],f[2],f[3],f[4]-0.5,f[5]-0.5,(f[6]||0)-IPD0];}
+function poly(f){const x=center(f);const t=[1];
+  for(const v of x)t.push(v);
+  if(DEGREE===2){for(let i=0;i<x.length;i++)for(let j=i;j<x.length;j++)t.push(x[i]*x[j]);}
+  return t;}
 function fit(S,lambda){
   const X=S.map(s=>poly(s.f)), Y=S.map(s=>s.t), C=X[0].length;
   const A=Array.from({length:C},()=>new Float64Array(C)), B=Array.from({length:C},()=>new Float64Array(2));
   for(let i=0;i<X.length;i++){const r=X[i];
     for(let a=0;a<C;a++){const ra=r[a]; if(!ra)continue;
       for(let b=a;b<C;b++)A[a][b]+=ra*r[b]; B[a][0]+=ra*Y[i][0]; B[a][1]+=ra*Y[i][1];}}
-  for(let a=0;a<C;a++){for(let b=0;b<a;b++)A[a][b]=A[b][a]; A[a][a]+=lambda;}
+  for(let a=0;a<C;a++){for(let b=0;b<a;b++)A[a][b]=A[b][a]; if(a>0)A[a][a]+=lambda;}  // don't penalise bias
   // Gauss-Jordan solve A W = B
   for(let c=0;c<C;c++){let p=c;for(let r=c+1;r<C;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;
     [A[c],A[p]]=[A[p],A[c]];[B[c],B[p]]=[B[p],B[c]];const pv=A[c][c]||1e-9;
@@ -66,7 +80,29 @@ function fit(S,lambda){
       for(let j=c;j<C;j++)A[r][j]-=fr*A[c][j]; B[r][0]-=fr*B[c][0]; B[r][1]-=fr*B[c][1];}}
   return B; // weights C×2
 }
-function predict(f){const p=poly(f);let sx=0,sy=0;for(let i=0;i<p.length;i++){sx+=p[i]*model[i][0];sy+=p[i]*model[i][1];}return [sx,sy];}
+function predictW(f,W){const p=poly(f);let sx=0,sy=0;for(let i=0;i<p.length;i++){sx+=p[i]*W[i][0];sy+=p[i]*W[i][1];}return [sx,sy];}
+function predict(f){return predictW(f,model);}
+
+// Held-out (leave-one-target-out) CV error over the primary averaged points → fractional dx,dy.
+function loocv(S,primaryN){
+  let ex=0,ey=0,n=0;
+  for(let k=0;k<primaryN;k++){const train=S.filter((_,i)=>i!==k); if(train.length<8)continue;
+    const W=fit(train,LAMBDA); const [sx,sy]=predictW(S[k].f,W);
+    ex+=Math.abs(sx-S[k].t[0]); ey+=Math.abs(sy-S[k].t[1]); n++;}
+  return n?{fx:ex/n,fy:ey/n}:{fx:NaN,fy:NaN};
+}
+
+// ---- one-euro filter for the cursor (review §7: replaces fixed EMA) ----
+class OneEuro{
+  constructor(mincut=1.2,beta=0.6,dcut=1.0){this.mincut=mincut;this.beta=beta;this.dcut=dcut;this.x=null;this.dx=0;this.t=null;}
+  _a(cut,dt){const tau=1/(2*Math.PI*cut);return 1/(1+tau/dt);}
+  filter(v,t){ if(this.x===null){this.x=v;this.t=t;return v;}
+    const dt=Math.max(t-this.t,1e-3); this.t=t;
+    const dv=(v-this.x)/dt, ad=this._a(this.dcut,dt); this.dx=this.dx+ad*(dv-this.dx);
+    const cut=this.mincut+this.beta*Math.abs(this.dx), a=this._a(cut,dt);
+    this.x=this.x+a*(v-this.x); return this.x; }
+}
+let oeX=new OneEuro(), oeY=new OneEuro();
 
 // ---- calibration sequence ----
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -95,14 +131,32 @@ async function calibrate(){
   phase="2"; msg("Step 2 / 2 — keep your EYES locked on the dot and slowly MOVE YOUR HEAD (turn left/right, up/down, tilt) until it pops.");
   for(const p of PTS2) await collectAt(p[0],p[1],500,2600,false);
   target=null; phase="";
-  model=fit(samples,1e-2);
-  try{ localStorage.setItem("argus_gaze_model", JSON.stringify(model)); }catch(e){}  // shared with the dashboard cursor
-  let err=0; for(const s of samples){const [px,py]=predict(s.f); err+=Math.hypot(px-s.t[0],py-s.t[1]);}
-  err/=samples.length;
-  document.getElementById("acc").textContent=`calibrated (${samples.length} samples) · mean error ≈ ${(err*100).toFixed(1)}% of screen`;
+  // set the IPD baseline (distance/scale) before fitting so the centred feature is ~0 at rest
+  IPD0=samples.reduce((s,v)=>s+(v.f[6]||0),0)/Math.max(samples.length,1);
+  model=fit(samples,LAMBDA);
+  persistModel();
+  reportError();
   document.getElementById("recal").style.display="inline-block";
-  msg("Now look around — the model compensates for head movement. Recalibrate if you change seating position.");
+  msg("Now look around — the model compensates for head movement. Click where you're looking to correct drift; recalibrate if you change seating position.");
+  oeX=new OneEuro(); oeY=new OneEuro(); gaze.has=false;
   mode="tracking";
+}
+
+function persistModel(){
+  try{ localStorage.setItem("argus_gaze_model", JSON.stringify(model));
+       localStorage.setItem("argus_gaze_ipd0", String(IPD0)); }catch(e){}  // shared with dashboard cursor
+}
+
+// Report held-out CV error in degrees + cm (review §7: benchmarkable, not "% of screen").
+function reportError(){
+  const Wcm=parseFloat(document.getElementById("scrW").value)||30;
+  const dist=parseFloat(document.getElementById("dist").value)||57;
+  const Hcm=Wcm*innerHeight/Math.max(innerWidth,1);
+  const {fx,fy}=loocv(samples,PTS.length);
+  const cm=Math.hypot(fx*Wcm,fy*Hcm);
+  const deg=Math.atan2(cm,dist)*180/Math.PI;
+  document.getElementById("acc").textContent =
+    `calibrated (${samples.length} samples) · held-out error ≈ ${deg.toFixed(2)}° (${cm.toFixed(1)} cm at ${dist} cm)`;
 }
 
 function msg(t){document.getElementById("msg").textContent=t;}
@@ -141,9 +195,8 @@ function connect(){
     if(m.name==="gaze_raw" && Array.isArray(m.value)){
       feat=m.value;
       if(mode==="tracking" && model){
-        const [sx,sy]=predict(feat);
-        const a=0.35;
-        gaze.x=gaze.has?gaze.x+a*(sx-gaze.x):sx; gaze.y=gaze.has?gaze.y+a*(sy-gaze.y):sy; gaze.has=true;
+        const [sx,sy]=predict(feat); const now=performance.now()/1000;
+        gaze.x=oeX.filter(sx,now); gaze.y=oeY.filter(sy,now); gaze.has=true;  // one-euro smoothing
       }
     }
   };
@@ -152,6 +205,13 @@ connect();
 
 document.getElementById("cal").onclick=calibrate;
 document.getElementById("recal").onclick=()=>{model=null;gaze.has=false;document.getElementById("cal").style.display="inline-block";calibrate();};
+// Click-anchored online drift correction (review §7 / WebGazer trick): the click point is
+// treated as ground truth at the current features → append an anchor and refit.
+cv.addEventListener("click",e=>{
+  if(mode!=="tracking"||!feat) return;
+  samples.push({f:feat.slice(),t:[e.clientX*devicePixelRatio/W(), e.clientY*devicePixelRatio/H()]});
+  model=fit(samples,LAMBDA); persistModel(); reportError();
+});
 addEventListener("keydown",e=>{ if(e.key==="f"||e.key==="F"){ if(!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }});
 </script>
 </body>

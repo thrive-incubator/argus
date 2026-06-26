@@ -55,6 +55,25 @@ def test_rppg_extractor_no_face_no_emit():
     assert recs == []
 
 
+# Regression: HR must still emit when live throughput is well below the nominal fps
+# (time-span gate, not frame-count) — e.g. heavy per-frame work drops the loop to ~10 fps.
+def test_rppg_extractor_emits_at_low_throughput():
+    ext = RppgExtractor(fps=30.0, window_s=10.0, min_window_s=8.0, update_period_s=1.0)
+    fb = SyntheticFaceBackbone()
+    cam = SyntheticCamera(width=64, height=64, fps=30.0, hr_bpm=72.0, n_frames=130)
+    out = []
+    for i in range(130):
+        frame, ok = cam.read()
+        if not ok:
+            break
+        ts = (i + 1) / 10.0  # only ~10 fps of wall-clock throughput
+        f = fb.process(frame, ts)
+        out.extend(ext.consume(FrameContext(frame=frame, ts=ts, frame_id=i, face=f)))
+    hrs = [r for r in out if r.name == "hr"]
+    assert len(hrs) >= 1                         # emits despite low fps
+    assert 42.0 <= hrs[-1].value <= 240.0
+
+
 # FR-6 / D3 — HRV extractor emits SDNN/RMSSD once the window fills; insufficient otherwise.
 def test_hrv_extractor_emits_after_window():
     ext = HrvExtractor(fps=30.0, window_s=20.0, min_window_s=15.0, update_period_s=5.0)

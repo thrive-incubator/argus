@@ -50,6 +50,21 @@ class EmotionEstimator(Protocol):
     def estimate(self, face_crop) -> AffectEstimate: ...
 
 
+def _va_from_scores(emotion, scores) -> AffectEstimate:
+    """Parse a multi-task (emotion + V/A) score vector into an AffectEstimate.
+
+    The Savchenko ``*_va_mtl`` models (HSEmotion / EmotiEffLib) lay out scores as
+    ``[8 emotion probs/logits ..., valence, arousal]`` — the last two columns are the native
+    V/A head. Accepts a 1-D vector or a 1×N batch.
+    """
+    scores = np.asarray(scores, dtype=float).reshape(-1)
+    if isinstance(emotion, (list, tuple, np.ndarray)):
+        emotion = emotion[0]
+    valence, arousal = float(scores[-2]), float(scores[-1])
+    confidence = float(scores[:-2].max()) if scores.size > 2 else 1.0
+    return AffectEstimate(str(emotion).lower(), valence, arousal, confidence)
+
+
 class HSEmotionEstimator:
     """Real HSEmotion adapter via the ``hsemotion-onnx`` package (enet_b0_8_va_mtl).
 
@@ -57,9 +72,12 @@ class HSEmotionEstimator:
     multi-task VA model) plus its 8-class emotion label.
     """
 
+    backend = "hsemotion"
+
     def __init__(self, model_name: str = "enet_b0_8_va_mtl"):
         from hsemotion_onnx.facial_emotions import HSEmotionRecognizer  # local import
 
+        self.model_name = model_name
         self._rec = HSEmotionRecognizer(model_name=model_name)
 
     def estimate(self, face_bgr):  # pragma: no cover - model inference
@@ -67,10 +85,53 @@ class HSEmotionEstimator:
 
         rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB) if face_bgr.ndim == 3 else face_bgr
         emotion, scores = self._rec.predict_emotions(rgb, logits=False)
-        scores = np.asarray(scores, dtype=float)
-        valence, arousal = float(scores[-2]), float(scores[-1])  # native V/A head
-        confidence = float(scores[:8].max())
-        return AffectEstimate(str(emotion).lower(), valence, arousal, confidence)
+        return _va_from_scores(emotion, scores)
+
+
+class EmotiEffLibAffectEstimator:
+    """Affect via the maintained **EmotiEffLib** package with a newer multi-task V/A head.
+
+    Review §8: HSEmotion's ``enet_b0_8_va_mtl`` V/A head is the one place with a real accuracy
+    gap; EmotiEffLib exposes newer multi-task VA backbones (``mobilevit_va_mtl``, ``mbf_va_mtl``)
+    with stronger valence/arousal CCC, same Apache-2.0 license, same ``[emotion…, V, A]`` score
+    layout. The recognizer can be injected for testing.
+    """
+
+    backend = "emotiefflib"
+
+    def __init__(self, va_model: str = "mobilevit_va_mtl", engine: str = "onnx",
+                 device: str = "cpu", recognizer=None):
+        self.model_name = va_model
+        if recognizer is not None:
+            self._rec = recognizer
+            return
+        from emotiefflib.facial_analysis import EmotiEffLibRecognizer  # local import
+
+        self._rec = EmotiEffLibRecognizer(engine=engine, model_name=va_model, device=device)
+
+    def estimate(self, face_bgr):  # pragma: no cover - model inference
+        import cv2
+
+        rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB) if face_bgr.ndim == 3 else face_bgr
+        emotion, scores = self._rec.predict_emotions(rgb, logits=False)
+        return _va_from_scores(emotion, scores)
+
+
+def build_affect_estimator(prefer: str = "emotiefflib",
+                           va_model: str = "mobilevit_va_mtl",
+                           fallback_model: str = "enet_b0_8_va_mtl"):
+    """Construct the best-available V/A affect estimator with graceful fallback (review §8).
+
+    Tries the preferred backend (EmotiEffLib's newer V/A head by default); if its package or
+    weights are unavailable, falls back to the HSEmotion ``enet_b0_8_va_mtl`` head. Always
+    returns an object with ``.estimate(face_bgr)`` and a ``.backend`` attribute.
+    """
+    if prefer == "emotiefflib":
+        try:
+            return EmotiEffLibAffectEstimator(va_model=va_model)
+        except Exception:
+            pass
+    return HSEmotionEstimator(model_name=fallback_model)
 
 
 def _face_crop_bgr(ctx, pad: float = 0.15):
@@ -88,6 +149,44 @@ def _face_crop_bgr(ctx, pad: float = 0.15):
     return frame[y0:y1, x0:x1]
 
 
+# MediaPipe FaceMesh iris-centre indices (right eye, left eye).
+_R_IRIS_C, _L_IRIS_C = 468, 473
+
+
+def aligned_face_crop_bgr(ctx, size: int = 224, scale: float = 2.9, y_offset: float = 0.40):
+    """Square, **eye-aligned** face crop sized ``size×size`` for the affect model.
+
+    The AffectNet-trained V/A models do NO internal detection/alignment — they just
+    ``cv2.resize(crop, (224,224))``. Feeding a raw (non-square) landmark bounding box stretches
+    the face and pushes predictions toward "surprise" (review/diagnosis). This builds the crop
+    the model expects: rotate so the eyes are level, scale by the inter-ocular distance, and
+    centre on the face — a single affine warp. Falls back to the bbox crop if iris landmarks
+    are unavailable.
+    """
+    frame = ctx.frame
+    lm = getattr(ctx.face, "landmarks", None)
+    if lm is None or len(lm) <= _L_IRIS_C:
+        return _face_crop_bgr(ctx)
+    import cv2
+
+    h, w = frame.shape[:2]
+    re = np.array([lm[_R_IRIS_C, 0] * w, lm[_R_IRIS_C, 1] * h], dtype=float)
+    le = np.array([lm[_L_IRIS_C, 0] * w, lm[_L_IRIS_C, 1] * h], dtype=float)
+    eye_c = (re + le) / 2.0
+    d = float(np.linalg.norm(le - re))
+    if d < 4.0:  # face too small / degenerate → fall back
+        return _face_crop_bgr(ctx)
+    angle = float(np.degrees(np.arctan2(le[1] - re[1], le[0] - re[0])))  # roll of the eye line
+    side = scale * d  # square side in source pixels
+    cx, cy = eye_c[0], eye_c[1] + y_offset * d  # centre a bit below the eyes
+    # affine that rotates the eyes level, scales side→size, and centres (cx,cy) in the output.
+    M = cv2.getRotationMatrix2D((cx, cy), angle, size / side)
+    M[0, 2] += size / 2.0 - cx
+    M[1, 2] += size / 2.0 - cy
+    return cv2.warpAffine(frame, M, (size, size), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_REPLICATE)
+
+
 class FakeEmotionEstimator:
     def __init__(self, estimate: AffectEstimate | None = None):
         self._e = estimate or AffectEstimate("neutral", 0.0, 0.0, 0.8)
@@ -99,9 +198,11 @@ class FakeEmotionEstimator:
 class AffectExtractor(Extractor):
     name = "affect"
 
-    def __init__(self, estimator: EmotionEstimator, fps: float = 30.0, live_hz: float = 12.0):
+    def __init__(self, estimator: EmotionEstimator, fps: float = 30.0, live_hz: float = 12.0,
+                 align: bool = True):
         self.estimator = estimator
         self.period = 1.0 / live_hz
+        self.align = align  # feed a square eye-aligned crop (the model expects it)
         self._last: float | None = None
 
     def consume(self, ctx: FrameContext) -> list[SignalRecord]:
@@ -110,7 +211,8 @@ class AffectExtractor(Extractor):
         if self._last is not None and (ctx.ts - self._last) < self.period:
             return []
         self._last = ctx.ts
-        est = self.estimator.estimate(_face_crop_bgr(ctx))
+        crop = aligned_face_crop_bgr(ctx) if self.align else _face_crop_bgr(ctx)
+        est = self.estimator.estimate(crop)
         meta = {"label": "estimate", "is_verdict": False, "emotion": est.emotion}
         return [
             SignalRecord("affect_valence", est.valence, est.confidence, ctx.ts,
